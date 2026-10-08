@@ -17,7 +17,7 @@ Brotli and XZ were the two smallest individual codecs in this sample. PX1 v1.2 t
 
 The full test disc contained 732,271,680 BIN bytes and 81 CUE bytes. The v1.2 combined archive was 515,448,806 bytes (491.57 MiB), or 70.39% of the uncompressed BIN/CUE size. That is 6,324,109 bytes (6.03 MiB) smaller than the earlier v1.1 Best Size archive and 20,887,430 bytes (19.92 MiB) smaller than the level-19 zstd archive. Brotli→XZ won on 145 chunks; XZ→Brotli won on 30.
 
-The archive passed PX1's complete verification and was extracted to a separate folder. The restored BIN SHA-256 was `458e63272b480385a98dfd9c1c26cc6581d7841ac612a5ec3a600d5d7c40da26`; the restored CUE SHA-256 was `3470744c0dd65cea7f78025a5b21695433db8d38740827d8d74bf870487c7199`. Both match their original source files exactly. DuckStation playback is left for the user to test.
+The archive passed PX1's complete verification and was extracted to a separate folder. The restored BIN SHA-256 was `458e63272b480385a98dfd9c1c26cc6581d7841ac612a5ec3a600d5d7c40da26`; the restored CUE SHA-256 was `3470744c0dd65cea7f78025a5b21695433db8d38740827d8d74bf870487c7199`. Both match their original source files exactly. On 2026-10-08, the user opened the restored disc from `Combined Restore Test` in DuckStation and provided a screenshot of the Final Fantasy VIII Disc 1 title menu running at 60 FPS. This confirms boot to the menu; a full playthrough was not tested.
 
 ## Per-chunk data
 
