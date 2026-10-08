@@ -1,0 +1,1 @@
+{"identifier":"default","description":"Desktop utility permissions","windows":["main"],"permissions":["core:default","dialog:default","opener:allow-reveal-item-in-dir"]}

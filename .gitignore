@@ -1,0 +1,22 @@
+node_modules/
+dist/
+src-tauri/target/
+px1-core/target/
+src-tauri/gen/schemas/
+
+# Local disc images, archives, and incomplete outputs must not be uploaded.
+*.[bB][iI][nN]
+*.[cC][uU][eE]
+*.[iI][sS][oO]
+*.[cC][hH][dD]
+*.[gG][dD][iI]
+*.[pP][xX]1
+*.[pP][xX]1md
+*.tmp
+*.log
+
+# Editor and operating-system files.
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

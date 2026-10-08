@@ -1,0 +1,22 @@
+[package]
+name = "px1-disc-compressor"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "px1_desktop"
+path = "src/lib.rs"
+
+[[bin]]
+name = "px1-disc-compressor"
+path = "src/main.rs"
+
+[dependencies]
+px1-core = { path = "../px1-core" }
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
