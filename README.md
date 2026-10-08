@@ -32,6 +32,8 @@ npm run tauri build
 
 The installers appear under `src-tauri/target/release/bundle/` and include the offline WebView2 installer, so installation does not require internet. Building from a fresh checkout may require internet to obtain npm/Rust dependencies and the WebView2 installer. The direct executable at `src-tauri/target/release/px1-disc-compressor.exe` uses an already installed WebView2 runtime.
 
+The Windows app icon is generated from `src-tauri/icons/source.png` and committed as `src-tauri/icons/icon.ico`. To regenerate it after changing the artwork, install Pillow in Python and run `python scripts/make_icon.py` before building.
+
 ## Tests and format
 
 Run the regular synthetic-disc tests:
