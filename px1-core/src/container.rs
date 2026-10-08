@@ -1,4 +1,4 @@
-use super::{compression, cue, metadata::{self, DiscMetadata}};
+use super::{compression::{self, ChunkCodec}, cue, metadata::{self, DiscMetadata}};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fs::{self, File, OpenOptions}, io::{Read, Seek, SeekFrom, Write}, path::Path, sync::atomic::{AtomicBool, Ordering}, time::Instant};
@@ -6,6 +6,7 @@ use std::{fs::{self, File, OpenOptions}, io::{Read, Seek, SeekFrom, Write}, path
 const MAGIC: &[u8; 4] = b"PX1\0";
 const HEADER_SIZE: u64 = 96;
 const ENTRY_SIZE: u64 = 56;
+const MIXED_ENTRY_SIZE: u64 = 60;
 const CHUNK_SIZE: usize = 4 * 1024 * 1024;
 const FOOTER_SIZE: u64 = 32;
 const MAX_MANIFEST: u64 = 1024 * 1024;
@@ -21,7 +22,7 @@ pub struct FileInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
-    pub format_version: u32, pub created_utc: String,
+    pub format_version: u32, #[serde(default)] pub format_minor: u16, pub created_utc: String,
     pub bin: FileInfo, pub cue: FileInfo, pub disc: DiscMetadata,
     pub compression: String, pub zstd_level: i32, pub chunk_size: u32, pub chunk_count: u64,
 }
@@ -39,10 +40,12 @@ pub struct Progress { pub stage: String, pub done: u64, pub total: u64, pub byte
 pub struct Report { pub manifest: Manifest, pub px1_size: u64, pub container_sha256: String, pub chunks_verified: u64, pub container_verified: bool, pub bin_verified: bool, pub cue_verified: bool }
 
 #[derive(Debug, Clone)]
-struct Header { manifest_off: u64, manifest_len: u64, cue_off: u64, cue_len: u64, table_off: u64, table_len: u64, data_off: u64, chunks: u64, footer_off: u64 }
+struct Header { minor: u16, compression_id: u32, manifest_off: u64, manifest_len: u64, cue_off: u64, cue_len: u64, table_off: u64, table_len: u64, data_off: u64, chunks: u64, footer_off: u64 }
+
+impl Header { fn entry_size(&self) -> u64 { if self.minor == 0 { ENTRY_SIZE } else { MIXED_ENTRY_SIZE } } }
 
 #[derive(Debug, Clone)]
-struct Entry { source_off: u64, compressed_off: u64, source_len: u32, compressed_len: u32, hash: [u8; 32] }
+struct Entry { source_off: u64, compressed_off: u64, source_len: u32, compressed_len: u32, hash: [u8; 32], codec: ChunkCodec }
 
 fn err<E: std::fmt::Display>(context: &str, e: E) -> String { format!("{context}: {e}") }
 fn checked_cancel(cancel: &AtomicBool) -> Result<(), String> { if cancel.load(Ordering::Relaxed) { Err("Operation cancelled".into()) } else { Ok(()) } }
@@ -70,10 +73,10 @@ fn header_bytes(h: &Header) -> [u8; HEADER_SIZE as usize] {
     let mut b = [0u8; HEADER_SIZE as usize];
     b[..4].copy_from_slice(MAGIC);
     b[4..6].copy_from_slice(&1u16.to_le_bytes());
-    b[6..8].copy_from_slice(&0u16.to_le_bytes());
+    b[6..8].copy_from_slice(&h.minor.to_le_bytes());
     b[8..12].copy_from_slice(&(HEADER_SIZE as u32).to_le_bytes());
     for (i, value) in [h.manifest_off,h.manifest_len,h.cue_off,h.cue_len,h.table_off,h.table_len,h.data_off,h.chunks,h.footer_off].iter().enumerate() { put_u64(&mut b,16+i*8,*value); }
-    b[88..92].copy_from_slice(&1u32.to_le_bytes());
+    b[88..92].copy_from_slice(&h.compression_id.to_le_bytes());
     b[92..96].copy_from_slice(&(CHUNK_SIZE as u32).to_le_bytes());
     b
 }
@@ -86,21 +89,25 @@ fn read_header(file: &mut File) -> Result<(Header, u64), String> {
     file.read_exact(&mut b).map_err(|e| err("Cannot read PX1 header",e))?;
     if &b[..4] != MAGIC { return Err("Invalid PX1 magic".into()); }
     if u16::from_le_bytes([b[4],b[5]]) != 1 { return Err("Unsupported PX1 major version".into()); }
-    if u16::from_le_bytes([b[6],b[7]]) != 0 { return Err("Unsupported PX1 minor version".into()); }
+    let minor = u16::from_le_bytes([b[6],b[7]]);
+    if minor > 1 { return Err("Unsupported PX1 minor version".into()); }
     if u32::from_le_bytes(b[8..12].try_into().unwrap()) != HEADER_SIZE as u32 || b[12..16] != [0;4] { return Err("Invalid PX1 header size or flags".into()); }
-    if u32::from_le_bytes(b[88..92].try_into().unwrap()) != 1 || u32::from_le_bytes(b[92..96].try_into().unwrap()) != CHUNK_SIZE as u32 { return Err("Unsupported PX1 compression settings".into()); }
-    let h = Header { manifest_off:get_u64(&b,16), manifest_len:get_u64(&b,24), cue_off:get_u64(&b,32), cue_len:get_u64(&b,40), table_off:get_u64(&b,48), table_len:get_u64(&b,56), data_off:get_u64(&b,64), chunks:get_u64(&b,72), footer_off:get_u64(&b,80) };
+    let compression_id = u32::from_le_bytes(b[88..92].try_into().unwrap());
+    if compression_id != if minor == 0 { 1 } else { 2 } || u32::from_le_bytes(b[92..96].try_into().unwrap()) != CHUNK_SIZE as u32 { return Err("Unsupported PX1 compression settings".into()); }
+    let h = Header { minor, compression_id, manifest_off:get_u64(&b,16), manifest_len:get_u64(&b,24), cue_off:get_u64(&b,32), cue_len:get_u64(&b,40), table_off:get_u64(&b,48), table_len:get_u64(&b,56), data_off:get_u64(&b,64), chunks:get_u64(&b,72), footer_off:get_u64(&b,80) };
     if h.cue_len > MAX_CUE { return Err("CUE is too large".into()); }
-    if h.manifest_off != HEADER_SIZE || h.manifest_len == 0 || h.manifest_len > MAX_MANIFEST || h.cue_off != h.manifest_off.checked_add(h.manifest_len).ok_or("PX1 offset overflow")? || h.table_off != h.cue_off.checked_add(h.cue_len).ok_or("PX1 offset overflow")? || h.table_len != h.chunks.checked_mul(ENTRY_SIZE).ok_or("PX1 chunk table overflow")? || h.data_off != h.table_off.checked_add(h.table_len).ok_or("PX1 offset overflow")? || h.footer_off < h.data_off || h.footer_off.checked_add(FOOTER_SIZE) != Some(len) { return Err("Invalid PX1 section offsets or lengths".into()); }
+    if h.manifest_off != HEADER_SIZE || h.manifest_len == 0 || h.manifest_len > MAX_MANIFEST || h.cue_off != h.manifest_off.checked_add(h.manifest_len).ok_or("PX1 offset overflow")? || h.table_off != h.cue_off.checked_add(h.cue_len).ok_or("PX1 offset overflow")? || h.table_len != h.chunks.checked_mul(h.entry_size()).ok_or("PX1 chunk table overflow")? || h.data_off != h.table_off.checked_add(h.table_len).ok_or("PX1 offset overflow")? || h.footer_off < h.data_off || h.footer_off.checked_add(FOOTER_SIZE) != Some(len) { return Err("Invalid PX1 section offsets or lengths".into()); }
     Ok((h,len))
 }
 
-fn write_entry(file: &mut File, entry: &Entry) -> Result<(), String> {
+fn write_entry(file: &mut File, entry: &Entry, mixed: bool) -> Result<(), String> {
     file.write_all(&entry.source_off.to_le_bytes()).map_err(|e| err("Write chunk table",e))?;
     file.write_all(&entry.compressed_off.to_le_bytes()).map_err(|e| err("Write chunk table",e))?;
     file.write_all(&entry.source_len.to_le_bytes()).map_err(|e| err("Write chunk table",e))?;
     file.write_all(&entry.compressed_len.to_le_bytes()).map_err(|e| err("Write chunk table",e))?;
-    file.write_all(&entry.hash).map_err(|e| err("Write chunk table",e))
+    file.write_all(&entry.hash).map_err(|e| err("Write chunk table",e))?;
+    if mixed { file.write_all(&(entry.codec as u32).to_le_bytes()).map_err(|e| err("Write chunk codec",e))?; }
+    Ok(())
 }
 
 fn read_entries(file: &mut File, h: &Header, bin_size: u64) -> Result<Vec<Entry>, String> {
@@ -111,9 +118,12 @@ fn read_entries(file: &mut File, h: &Header, bin_size: u64) -> Result<Vec<Entry>
     let mut source_off = 0u64;
     let mut compressed_off = h.data_off;
     for _ in 0..h.chunks {
-        let mut b = [0u8; ENTRY_SIZE as usize];
-        file.read_exact(&mut b).map_err(|e| err("Read chunk table",e))?;
-        let entry = Entry { source_off:get_u64(&b,0), compressed_off:get_u64(&b,8), source_len:u32::from_le_bytes(b[16..20].try_into().unwrap()), compressed_len:u32::from_le_bytes(b[20..24].try_into().unwrap()), hash:b[24..56].try_into().unwrap() };
+        let mut b = [0u8; MIXED_ENTRY_SIZE as usize];
+        file.read_exact(&mut b[..h.entry_size() as usize]).map_err(|e| err("Read chunk table",e))?;
+        let codec = if h.minor == 0 { ChunkCodec::Zstd } else {
+            ChunkCodec::from_id(u32::from_le_bytes(b[56..60].try_into().unwrap()))?
+        };
+        let entry = Entry { source_off:get_u64(&b,0), compressed_off:get_u64(&b,8), source_len:u32::from_le_bytes(b[16..20].try_into().unwrap()), compressed_len:u32::from_le_bytes(b[20..24].try_into().unwrap()), hash:b[24..56].try_into().unwrap(), codec };
         let remaining = bin_size - source_off;
         if entry.source_off != source_off || entry.source_len as u64 != remaining.min(CHUNK_SIZE as u64) || entry.compressed_off != compressed_off || entry.compressed_len == 0 || entry.compressed_len as u64 > CHUNK_SIZE as u64 + 1024 * 1024 { return Err("Invalid chunk table entry".into()); }
         source_off += entry.source_len as u64;
@@ -131,7 +141,8 @@ fn read_manifest(file: &mut File, h: &Header) -> Result<Manifest, String> {
     file.read_exact(&mut bytes).map_err(|e| err("Read manifest",e))?;
     let m: Manifest = serde_json::from_slice(&bytes).map_err(|e| err("Invalid manifest",e))?;
     validate_bin_size(m.bin.size)?;
-    if m.format_version != 1 || m.compression != "zstd" || m.chunk_size != CHUNK_SIZE as u32 || m.chunk_count != h.chunks || m.cue.size != h.cue_len || !safe_name(&m.bin.name) || !safe_name(&m.cue.name) || m.bin.name.eq_ignore_ascii_case(&m.cue.name) || m.bin.sha256.len()!=64 || m.cue.sha256.len()!=64 || hex::decode(&m.bin.sha256).map_or(true, |x|x.len()!=32) || hex::decode(&m.cue.sha256).map_or(true, |x|x.len()!=32) { return Err("Invalid manifest fields".into()); }
+    let expected_compression = if h.minor == 0 { "zstd" } else { "mixed" };
+    if m.format_version != 1 || m.format_minor != h.minor || m.compression != expected_compression || m.chunk_size != CHUNK_SIZE as u32 || m.chunk_count != h.chunks || m.cue.size != h.cue_len || !safe_name(&m.bin.name) || !safe_name(&m.cue.name) || m.bin.name.eq_ignore_ascii_case(&m.cue.name) || m.bin.sha256.len()!=64 || m.cue.sha256.len()!=64 || hex::decode(&m.bin.sha256).map_or(true, |x|x.len()!=32) || hex::decode(&m.cue.sha256).map_or(true, |x|x.len()!=32) { return Err("Invalid manifest fields".into()); }
     Ok(m)
 }
 
@@ -168,6 +179,10 @@ pub fn compress(path: &Path, output: &Path, level: i32, title: Option<String>, d
 }
 
 pub fn compress_with_bin(path: &Path, selected_bin: Option<&Path>, output: &Path, level: i32, title: Option<String>, disc_number: Option<u32>, cancel: &AtomicBool, progress: impl Fn(Progress)) -> Result<Report, String> {
+    compress_with_bin_strategy(path, selected_bin, output, level, false, title, disc_number, cancel, progress)
+}
+
+pub fn compress_with_bin_strategy(path: &Path, selected_bin: Option<&Path>, output: &Path, level: i32, best_size: bool, title: Option<String>, disc_number: Option<u32>, cancel: &AtomicBool, progress: impl Fn(Progress)) -> Result<Report, String> {
     if !(-7..=22).contains(&level) { return Err("Invalid zstd level".into()); }
     let src = cue::parse_with_bin(path, selected_bin)?;
     let bin_size = src.bin_path.metadata().map_err(|e| err("Cannot stat BIN",e))?.len();
@@ -191,11 +206,12 @@ pub fn compress_with_bin(path: &Path, selected_bin: Option<&Path>, output: &Path
     disc.title = title.filter(|x|!x.trim().is_empty());
     disc.disc_number = disc_number.filter(|x|*x>0);
     let chunks = bin_size.div_ceil(CHUNK_SIZE as u64);
-    let manifest = Manifest { format_version:1, created_utc:chrono::Utc::now().to_rfc3339(), bin:FileInfo{name:src.referenced_bin_name,size:bin_size,sha256:bin_hash,source_name}, cue:FileInfo{name:cue_name,size:cue_size,sha256:sha_bytes(&src.cue_bytes),source_name:None}, disc, compression:"zstd".into(),zstd_level:level,chunk_size:CHUNK_SIZE as u32,chunk_count:chunks };
+    let minor = if best_size { 1 } else { 0 };
+    let manifest = Manifest { format_version:1, format_minor:minor, created_utc:chrono::Utc::now().to_rfc3339(), bin:FileInfo{name:src.referenced_bin_name,size:bin_size,sha256:bin_hash,source_name}, cue:FileInfo{name:cue_name,size:cue_size,sha256:sha_bytes(&src.cue_bytes),source_name:None}, disc, compression:if best_size { "mixed" } else { "zstd" }.into(),zstd_level:level,chunk_size:CHUNK_SIZE as u32,chunk_count:chunks };
     let manifest_bytes = serde_json::to_vec(&manifest).map_err(|e| err("Serialize manifest",e))?;
     if manifest_bytes.len() as u64 > MAX_MANIFEST { return Err("Manifest is too large".into()); }
-    let table_len = chunks.checked_mul(ENTRY_SIZE).ok_or("Chunk table too large")?;
-    let header = Header { manifest_off:HEADER_SIZE, manifest_len:manifest_bytes.len() as u64, cue_off:HEADER_SIZE+manifest_bytes.len() as u64, cue_len:cue_size, table_off:HEADER_SIZE+manifest_bytes.len() as u64+cue_size, table_len, data_off:HEADER_SIZE+manifest_bytes.len() as u64+cue_size+table_len, chunks, footer_off:0 };
+    let table_len = chunks.checked_mul(if best_size { MIXED_ENTRY_SIZE } else { ENTRY_SIZE }).ok_or("Chunk table too large")?;
+    let header = Header { minor, compression_id:if best_size { 2 } else { 1 }, manifest_off:HEADER_SIZE, manifest_len:manifest_bytes.len() as u64, cue_off:HEADER_SIZE+manifest_bytes.len() as u64, cue_len:cue_size, table_off:HEADER_SIZE+manifest_bytes.len() as u64+cue_size, table_len, data_off:HEADER_SIZE+manifest_bytes.len() as u64+cue_size+table_len, chunks, footer_off:0 };
     let result = (|| -> Result<Report,String> {
         let mut out = OpenOptions::new().write(true).read(true).create_new(true).open(&temp).map_err(|e| err("Create temporary PX1",e))?;
         out.write_all(&[0;HEADER_SIZE as usize]).map_err(|e|err("Write header placeholder",e))?;
@@ -211,16 +227,16 @@ pub fn compress_with_bin(path: &Path, selected_bin: Option<&Path>, output: &Path
             let source_off = n*CHUNK_SIZE as u64;
             let size = (bin_size-source_off).min(CHUNK_SIZE as u64) as usize;
             input.read_exact(&mut raw[..size]).map_err(|e|err("Read BIN chunk",e))?;
-            let compressed = compression::encode_chunk(&raw[..size],level)?;
+            let compressed = if best_size { compression::encode_best_chunk(&raw[..size],level,cancel)? } else { compression::encode_chunk(&raw[..size],level)? };
             let compressed_off = out.stream_position().map_err(|e|err("Get PX1 position",e))?;
             out.write_all(&compressed.data).map_err(|e|err("Write BIN chunk",e))?;
-            entries.push(Entry{source_off,compressed_off,source_len:size as u32,compressed_len:compressed.data.len().try_into().map_err(|_|"Compressed chunk too large")?,hash:compressed.source_sha256});
+            entries.push(Entry{source_off,compressed_off,source_len:size as u32,compressed_len:compressed.data.len().try_into().map_err(|_|"Compressed chunk too large")?,hash:compressed.source_sha256,codec:compressed.codec});
             progress(Progress{stage:"Compressing".into(),done:n+1,total:chunks,bytes_written:out.stream_position().unwrap_or(0),elapsed_seconds:start.elapsed().as_secs()});
         }
         if input.read(&mut [0u8;1]).map_err(|e|err("Check BIN size",e))? != 0 { return Err("BIN changed while compressing".into()); }
         let footer_off = out.stream_position().map_err(|e|err("Get PX1 size",e))?;
         out.seek(SeekFrom::Start(header.table_off)).map_err(|e|err("Seek chunk table",e))?;
-        for entry in &entries { write_entry(&mut out,entry)?; }
+        for entry in &entries { write_entry(&mut out,entry,best_size)?; }
         let final_header = Header{footer_off,..header};
         out.seek(SeekFrom::Start(0)).map_err(|e|err("Seek header",e))?;
         out.write_all(&header_bytes(&final_header)).map_err(|e|err("Write header",e))?;
@@ -275,7 +291,7 @@ pub fn verify(path: &Path, cancel: &AtomicBool, progress: impl Fn(Progress)) -> 
         file.seek(SeekFrom::Start(entry.compressed_off)).map_err(|e|err("Seek chunk",e))?;
         let mut compressed=vec![0u8;entry.compressed_len as usize];
         file.read_exact(&mut compressed).map_err(|e|err("Read chunk",e))?;
-        let raw=compression::decode_chunk(&compressed,entry.source_len as usize,&entry.hash).map_err(|e|format!("Chunk {} {e}",n+1))?;
+        let raw=compression::decode_chunk_codec(&compressed,entry.source_len as usize,&entry.hash,entry.codec).map_err(|e|format!("Chunk {} {e}",n+1))?;
         bin_hash.update(&raw);
         progress(Progress{stage:"Verifying".into(),done:n as u64+1,total:h.chunks,bytes_written:len,elapsed_seconds:start.elapsed().as_secs()});
     }
@@ -316,7 +332,7 @@ pub fn extract(path: &Path, dest: &Path, cancel: &AtomicBool, progress: impl Fn(
             input.seek(SeekFrom::Start(entry.compressed_off)).map_err(|e|err("Seek chunk",e))?;
             let mut compressed=vec![0u8;entry.compressed_len as usize];
             input.read_exact(&mut compressed).map_err(|e|err("Read chunk",e))?;
-            let raw=compression::decode_chunk(&compressed,entry.source_len as usize,&entry.hash).map_err(|e|format!("Chunk {} {e}",n+1))?;
+            let raw=compression::decode_chunk_codec(&compressed,entry.source_len as usize,&entry.hash,entry.codec).map_err(|e|format!("Chunk {} {e}",n+1))?;
             bin.write_all(&raw).map_err(|e|err("Write BIN",e))?;
             bin_hash.update(&raw);
             progress(Progress{stage:"Extracting".into(),done:n as u64+1,total:h.chunks,bytes_written:entry.source_off+entry.source_len as u64,elapsed_seconds:start.elapsed().as_secs()});

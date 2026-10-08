@@ -7,7 +7,7 @@ import './styles.css';
 
 type Disc = { platform?: string; media?: string; serial?: string; region?: string; volume_id?: string; boot_executable?: string; title?: string; disc_number?: number };
 type Source = { cue_path: string; bin_path: string; referenced_bin_name: string; bin_size: number; cue_size: number; track_count: number; data_track_count: number; disc: Disc };
-type Manifest = { format_version: number; created_utc: string; bin: { name: string; source_name?: string; size: number; sha256: string }; cue: { name: string; size: number; sha256: string }; disc: Disc; compression: string; zstd_level: number; chunk_size: number; chunk_count: number };
+type Manifest = { format_version: number; format_minor?: number; created_utc: string; bin: { name: string; source_name?: string; size: number; sha256: string }; cue: { name: string; size: number; sha256: string }; disc: Disc; compression: string; zstd_level: number; chunk_size: number; chunk_count: number };
 type PxInfo = { manifest: Manifest; px1_size: number; container_sha256: string };
 type Report = PxInfo & { chunks_verified: number; container_verified: boolean; bin_verified: boolean; cue_verified: boolean };
 type Progress = { stage: string; done: number; total: number; bytes_written: number; elapsed_seconds: number };
@@ -28,7 +28,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       </fieldset>
       <fieldset><legend>Output</legend>
         <div class="field pathfield"><label for="pxOutput">File:</label><input id="pxOutput" placeholder="Output .px1 path"><button id="browseOutput" title="Choose output PX1" aria-label="Choose output PX1">…</button></div>
-        <div class="field shortfield"><label for="level">Compression:</label><select id="level"><option value="1">Fast</option><option value="6" selected>Balanced</option><option value="19">Maximum</option></select></div>
+        <div class="field shortfield"><label for="level">Compression:</label><select id="level"><option value="1">Fast</option><option value="6" selected>Balanced</option><option value="19">Maximum</option><option value="best">Best Size (slower)</option></select></div>
         <details id="advanced"><summary>Options…</summary>
           <div class="field shortfield"><label for="title">Title:</label><input id="title" placeholder="Optional description"></div>
           <div class="field numberfield"><label for="discNumber">Disc:</label><input id="discNumber" type="number" min="1" step="1" placeholder="Unknown"></div>
@@ -75,6 +75,7 @@ const input = (id: string) => el<HTMLInputElement>(id);
 const text = (id: string, value: string) => { el<HTMLElement>(id).textContent = value; };
 const size = (n: number) => n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(2)} GiB` : n >= 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)} MiB` : n >= 1024 ? `${(n / 1024).toFixed(1)} KiB` : `${n} B`;
 const known = (v?: string | number) => v == null || v === '' ? 'Unknown' : String(v);
+const compressionName = (manifest: Manifest) => manifest.compression === 'mixed' ? 'Best Size (zstd/XZ, optional delta)' : `Zstandard (level ${manifest.zstd_level})`;
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const base = (p: string) => p.split(/[\\/]/).pop() || p;
 const parent = (p: string) => p.slice(0, Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/')));
@@ -190,13 +191,13 @@ async function loadPx1(path: string, target: 'extract' | 'verify') {
       ['Region:', known(manifest.disc.region)], ['Title:', known(manifest.disc.title)],
       ['Disc:', known(manifest.disc.disc_number)],
       ['Original size:', size(manifest.bin.size + manifest.cue.size)], ['PX1 size:', size(info.px1_size)],
-      ['Compression:', `Zstandard (level ${manifest.zstd_level})`],
+      ['Compression:', compressionName(manifest)],
       ['Restored files:', `${manifest.bin.name}, ${manifest.cue.name}`]
     ];
     summary.innerHTML = properties(rows) + `<details class="technical"><summary>Technical details</summary>${properties([
-      ['Created:', manifest.created_utc], ['Format:', `PX1 v${manifest.format_version}`],
+      ['Created:', manifest.created_utc], ['Format:', `PX1 v${manifest.format_version}.${manifest.format_minor ?? 0}`],
       ['Region:', known(manifest.disc.region)], ['Title:', known(manifest.disc.title)],
-      ['Disc:', known(manifest.disc.disc_number)], ['Compression:', `Zstandard (level ${manifest.zstd_level})`],
+      ['Disc:', known(manifest.disc.disc_number)], ['Compression:', compressionName(manifest)],
       ['Restored files:', `${manifest.bin.name}, ${manifest.cue.name}`],
       ...(manifest.bin.source_name ? [['Source BIN label:', manifest.bin.source_name] as [string, string]] : []),
       ['Volume ID:', known(manifest.disc.volume_id)], ['Boot executable:', known(manifest.disc.boot_executable)],
@@ -257,8 +258,9 @@ el<HTMLButtonElement>('doCompress').onclick = () => {
   if (!source) return;
   const output = input('pxOutput').value;
   const number = Number(input('discNumber').value);
+  const bestSize = input('level').value === 'best';
   lastOutput = output;
-  void run<Report>('compress_disc', { cuePath: source.cue_path, binPath: manualBinPath, outputPath: output, level: Number(input('level').value), title: input('title').value || null, discNumber: Number.isInteger(number) && number > 0 ? number : null }, report => {
+  void run<Report>('compress_disc', { cuePath: source.cue_path, binPath: manualBinPath, outputPath: output, level: bestSize ? 19 : Number(input('level').value), bestSize, title: input('title').value || null, discNumber: Number.isInteger(number) && number > 0 ? number : null }, report => {
     const original = report.manifest.bin.size + report.manifest.cue.size;
     const saved = original - report.px1_size;
     const change = saved >= 0 ? `Saved: ${size(saved)}` : `Larger: ${size(-saved)}`;

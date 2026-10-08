@@ -1,11 +1,12 @@
 # PX1 Disc Compressor
 
-PX1 is a Windows desktop utility that compresses one PlayStation BIN/CUE disc into a `.px1` file, verifies it, and restores the original BIN and CUE byte for byte. It uses Tauri 2, TypeScript/HTML/CSS, Rust, zstd, and SHA-256.
+PX1 is a Windows desktop utility that compresses one PlayStation BIN/CUE disc into a `.px1` file, verifies it, and restores the original BIN and CUE byte for byte. It uses Tauri 2, TypeScript/HTML/CSS, Rust, zstd, XZ, and SHA-256.
 
 ## What v0.1 supports
 
 - One CUE referencing one `BINARY` BIN with 2352-byte sectors. The BIN may contain multiple tracks. PX1 locates it from the CUE by default; if the BIN was renamed or moved, the user can select it manually. Other CUE layouts are rejected clearly.
 - Independently compressed 4 MiB BIN chunks, exact CUE bytes, per-chunk and original-file SHA-256 hashes, and a whole-container SHA-256 footer.
+- Fast, Balanced, and Maximum use zstd. Best Size tries zstd, XZ, and reversible byte-delta variants on each chunk, then stores the smallest. Best Size takes longer but is still lossless; its actual savings depend on the disc.
 - Compress, Extract, and Verify desktop workflows with progress, cancellation, and a local log.
 - Optional disc metadata from the image's data track: ISO 9660 volume ID, `SYSTEM.CNF` boot executable, PlayStation serial, and region when detectable. Title and disc number can be entered as descriptions.
 
@@ -50,7 +51,7 @@ Run the slower, roughly 700 MiB synthetic round-trip test separately:
 cargo test --manifest-path px1-core/Cargo.toml full_size_disc_streams_and_roundtrips -- --ignored
 ```
 
-`px1-core` has no Tauri or network dependency. Its `compression` module handles zstd chunks without PlayStation sector assumptions; CUE, metadata, and container modules provide the PX1-specific rules. The documented versioned container is in [docs/PX1_FORMAT.md](docs/PX1_FORMAT.md).
+`px1-core` has no Tauri or network dependency. Its `compression` module handles zstd and XZ chunks without PlayStation sector assumptions; CUE, metadata, and container modules provide the PX1-specific rules. The new app reads both older PX1 v1.0 archives and Best Size v1.1 archives. Older app builds cannot read v1.1. The documented versioned container is in [docs/PX1_FORMAT.md](docs/PX1_FORMAT.md).
 
 ## Upload this repository
 

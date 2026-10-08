@@ -65,6 +65,39 @@ fn generic_names_detect_disc_and_roundtrip_exactly() {
 }
 
 #[test]
+fn best_size_archive_roundtrips_and_old_archive_remains_readable() {
+    let dir=tempfile::tempdir().unwrap();
+    let cue=source(dir.path());
+    let bin=dir.path().join("20261007_021434.BIN");
+    let original_bin=fs::read(&bin).unwrap();
+    let original_cue=fs::read(&cue).unwrap();
+    let cancel=AtomicBool::new(false);
+    let best=dir.path().join("best.px1");
+    let report=container::compress_with_bin_strategy(&cue,None,&best,19,true,None,None,&cancel,|_|{}).unwrap();
+    assert_eq!(report.manifest.format_minor,1);
+    assert_eq!(report.manifest.compression,"mixed");
+    assert!(report.container_verified && report.bin_verified && report.cue_verified);
+    assert_eq!(inspect(&best).unwrap().0.format_minor,1);
+    verify(&best,&cancel,|_|{}).unwrap();
+    let mut invalid_codec=fs::read(&best).unwrap();
+    let table_offset=u64::from_le_bytes(invalid_codec[48..56].try_into().unwrap()) as usize;
+    invalid_codec[table_offset+56..table_offset+60].copy_from_slice(&99u32.to_le_bytes());
+    let malformed=dir.path().join("invalid-codec.px1");
+    fs::write(&malformed,invalid_codec).unwrap();
+    assert!(inspect(&malformed).unwrap_err().contains("Unsupported chunk codec ID"));
+    let restored=dir.path().join("restored"); fs::create_dir(&restored).unwrap();
+    extract(&best,&restored,&cancel,|_|{}).unwrap();
+    assert_eq!(fs::read(restored.join("20261007_021434.BIN")).unwrap(),original_bin);
+    assert_eq!(fs::read(restored.join("20261007_021434.CUE")).unwrap(),original_cue);
+
+    let legacy=dir.path().join("legacy.px1");
+    let old=compress(&cue,&legacy,19,None,None,&cancel,|_|{}).unwrap();
+    assert_eq!(old.manifest.format_minor,0);
+    assert_eq!(old.manifest.compression,"zstd");
+    verify(&legacy,&cancel,|_|{}).unwrap();
+}
+
+#[test]
 fn manual_bin_selection_preserves_bytes_and_restores_cue_filename() {
     let dir=tempfile::tempdir().unwrap();
     let cue=source(dir.path());
