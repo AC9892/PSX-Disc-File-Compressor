@@ -1,4 +1,4 @@
-use px1_core::{self as px, container::{source_info_with_bin, compress_with_bin_strategy}, DiscInfo, Manifest, Report};
+use px1_core::{self as px, container::{source_info_with_bin, compress_with_bin_strategy, compress_with_bin_combined}, DiscInfo, Manifest, Report};
 use std::{fs::OpenOptions, io::Write, path::PathBuf, sync::{Arc,atomic::{AtomicBool,Ordering}}};
 use tauri::{Emitter, State};
 
@@ -40,12 +40,16 @@ pub fn save_log(path: String, content: String) -> Result<(),String> {
 }
 
 #[tauri::command]
-pub async fn compress_disc(app: tauri::AppHandle, state: State<'_,JobState>, cue_path: String, bin_path: Option<String>, output_path: String, level: i32, best_size: bool, title: Option<String>, disc_number: Option<u32>) -> Result<Report,String> {
+pub async fn compress_disc(app: tauri::AppHandle, state: State<'_,JobState>, cue_path: String, bin_path: Option<String>, output_path: String, level: i32, best_size: bool, combined: bool, title: Option<String>, disc_number: Option<u32>) -> Result<Report,String> {
     let (guard,cancel)=start(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         let _guard=guard;
         let selected = bin_path.map(PathBuf::from);
-        compress_with_bin_strategy(&PathBuf::from(cue_path),selected.as_deref(),&PathBuf::from(output_path),level,best_size,title,disc_number,&cancel,|p| { let _=app.emit("px1-progress",p); })
+        if combined {
+            compress_with_bin_combined(&PathBuf::from(cue_path),selected.as_deref(),&PathBuf::from(output_path),title,disc_number,&cancel,|p| { let _=app.emit("px1-progress",p); })
+        } else {
+            compress_with_bin_strategy(&PathBuf::from(cue_path),selected.as_deref(),&PathBuf::from(output_path),level,best_size,title,disc_number,&cancel,|p| { let _=app.emit("px1-progress",p); })
+        }
     }).await.map_err(|e|format!("Worker failed: {e}"))?
 }
 

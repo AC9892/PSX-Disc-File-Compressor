@@ -98,6 +98,32 @@ fn best_size_archive_roundtrips_and_old_archive_remains_readable() {
 }
 
 #[test]
+fn combined_brotli_xz_archive_restores_exact_disc_files() {
+    let dir=tempfile::tempdir().unwrap();
+    let cue=source(dir.path());
+    let bin=dir.path().join("20261007_021434.BIN");
+    let original_bin=fs::read(&bin).unwrap();
+    let original_cue=fs::read(&cue).unwrap();
+    let px=dir.path().join("combined.px1");
+    let cancel=AtomicBool::new(false);
+    let report=container::compress_with_bin_combined(&cue,None,&px,None,None,&cancel,|_|{}).unwrap();
+    assert_eq!(report.manifest.format_minor,2);
+    assert_eq!(report.manifest.compression,"stacked");
+    assert!(report.bin_verified && report.cue_verified && report.container_verified);
+    verify(&px,&cancel,|_|{}).unwrap();
+    let restored=dir.path().join("restored"); fs::create_dir(&restored).unwrap();
+    extract(&px,&restored,&cancel,|_|{}).unwrap();
+    assert_eq!(fs::read(restored.join("20261007_021434.BIN")).unwrap(),original_bin);
+    assert_eq!(fs::read(restored.join("20261007_021434.CUE")).unwrap(),original_cue);
+    let mut invalid=fs::read(&px).unwrap();
+    let table_offset=u64::from_le_bytes(invalid[48..56].try_into().unwrap()) as usize;
+    invalid[table_offset+56..table_offset+60].copy_from_slice(&2u32.to_le_bytes());
+    let malformed=dir.path().join("invalid-stacked-codec.px1");
+    fs::write(&malformed,invalid).unwrap();
+    assert!(inspect(&malformed).unwrap_err().contains("Unsupported chunk codec ID"));
+}
+
+#[test]
 fn manual_bin_selection_preserves_bytes_and_restores_cue_filename() {
     let dir=tempfile::tempdir().unwrap();
     let cue=source(dir.path());

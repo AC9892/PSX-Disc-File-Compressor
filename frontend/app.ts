@@ -28,7 +28,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       </fieldset>
       <fieldset><legend>Output</legend>
         <div class="field pathfield"><label for="pxOutput">File:</label><input id="pxOutput" placeholder="Output .px1 path"><button id="browseOutput" title="Choose output PX1" aria-label="Choose output PX1">…</button></div>
-        <div class="field shortfield"><label for="level">Compression:</label><select id="level"><option value="1">Fast</option><option value="6" selected>Balanced</option><option value="19">Maximum</option><option value="best">Best Size (slower)</option></select></div>
+        <div class="field shortfield"><label for="level">Compression:</label><select id="level"><option value="1">Fast</option><option value="6" selected>Balanced</option><option value="19">Maximum</option><option value="best">Best Size (slower)</option><option value="combined">Combine Best Two (Brotli + XZ)</option></select></div>
         <details id="advanced"><summary>Options…</summary>
           <div class="field shortfield"><label for="title">Title:</label><input id="title" placeholder="Optional description"></div>
           <div class="field numberfield"><label for="discNumber">Disc:</label><input id="discNumber" type="number" min="1" step="1" placeholder="Unknown"></div>
@@ -75,7 +75,7 @@ const input = (id: string) => el<HTMLInputElement>(id);
 const text = (id: string, value: string) => { el<HTMLElement>(id).textContent = value; };
 const size = (n: number) => n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(2)} GiB` : n >= 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)} MiB` : n >= 1024 ? `${(n / 1024).toFixed(1)} KiB` : `${n} B`;
 const known = (v?: string | number) => v == null || v === '' ? 'Unknown' : String(v);
-const compressionName = (manifest: Manifest) => manifest.compression === 'mixed' ? 'Best Size (zstd/XZ, optional delta)' : `Zstandard (level ${manifest.zstd_level})`;
+const compressionName = (manifest: Manifest) => manifest.compression === 'stacked' ? 'Brotli + XZ (both layers)' : manifest.compression === 'mixed' ? 'Best Size (zstd/XZ, optional delta)' : `Zstandard (level ${manifest.zstd_level})`;
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const base = (p: string) => p.split(/[\\/]/).pop() || p;
 const parent = (p: string) => p.slice(0, Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/')));
@@ -259,8 +259,9 @@ el<HTMLButtonElement>('doCompress').onclick = () => {
   const output = input('pxOutput').value;
   const number = Number(input('discNumber').value);
   const bestSize = input('level').value === 'best';
+  const combined = input('level').value === 'combined';
   lastOutput = output;
-  void run<Report>('compress_disc', { cuePath: source.cue_path, binPath: manualBinPath, outputPath: output, level: bestSize ? 19 : Number(input('level').value), bestSize, title: input('title').value || null, discNumber: Number.isInteger(number) && number > 0 ? number : null }, report => {
+  void run<Report>('compress_disc', { cuePath: source.cue_path, binPath: manualBinPath, outputPath: output, level: bestSize || combined ? 19 : Number(input('level').value), bestSize, combined, title: input('title').value || null, discNumber: Number.isInteger(number) && number > 0 ? number : null }, report => {
     const original = report.manifest.bin.size + report.manifest.cue.size;
     const saved = original - report.px1_size;
     const change = saved >= 0 ? `Saved: ${size(saved)}` : `Larger: ${size(-saved)}`;

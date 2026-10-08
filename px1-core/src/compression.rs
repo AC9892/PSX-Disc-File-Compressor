@@ -3,13 +3,14 @@ use std::{io::{Read, Write}, sync::atomic::{AtomicBool, Ordering}};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
-pub enum ChunkCodec { Zstd = 1, Xz = 2, DeltaZstd = 3, DeltaXz = 4 }
+pub enum ChunkCodec { Zstd = 1, Xz = 2, DeltaZstd = 3, DeltaXz = 4, BrotliXz = 5, XzBrotli = 6 }
 
 impl ChunkCodec {
     pub fn from_id(id: u32) -> Result<Self, String> {
         match id {
             1 => Ok(Self::Zstd), 2 => Ok(Self::Xz),
             3 => Ok(Self::DeltaZstd), 4 => Ok(Self::DeltaXz),
+            5 => Ok(Self::BrotliXz), 6 => Ok(Self::XzBrotli),
             _ => Err(format!("Unsupported chunk codec ID {id}")),
         }
     }
@@ -63,6 +64,41 @@ fn xz_decode(data: &[u8], source_len: usize) -> Result<Vec<u8>, String> {
     Ok(output)
 }
 
+fn brotli_encode(source: &[u8]) -> Result<Vec<u8>, String> {
+    let mut encoder = brotli::CompressorReader::new(source, 4096, 11, 22);
+    let mut output = Vec::new();
+    encoder.read_to_end(&mut output).map_err(|e| format!("Compress Brotli chunk: {e}"))?;
+    Ok(output)
+}
+
+fn brotli_decode(data: &[u8], max_len: usize) -> Result<Vec<u8>, String> {
+    let mut decoder = brotli::Decompressor::new(data, 4096);
+    let mut output = Vec::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let n = decoder.read(&mut buffer).map_err(|e| format!("Decompress Brotli chunk: {e}"))?;
+        if n == 0 { break; }
+        if n > max_len - output.len() { return Err("Brotli chunk expands beyond recorded size".into()); }
+        output.extend_from_slice(&buffer[..n]);
+    }
+    Ok(output)
+}
+
+pub fn encode_combined_chunk(source: &[u8], cancel: &AtomicBool) -> Result<EncodedChunk, String> {
+    let hash = Sha256::digest(source).into();
+    let brotli = brotli_encode(source)?;
+    if cancel.load(Ordering::Relaxed) { return Err("Operation cancelled".into()); }
+    let brotli_xz = xz_encode(&brotli)?;
+    if cancel.load(Ordering::Relaxed) { return Err("Operation cancelled".into()); }
+    let xz = xz_encode(source)?;
+    if cancel.load(Ordering::Relaxed) { return Err("Operation cancelled".into()); }
+    let xz_brotli = brotli_encode(&xz)?;
+    let (data, codec) = if brotli_xz.len() <= xz_brotli.len() {
+        (brotli_xz, ChunkCodec::BrotliXz)
+    } else { (xz_brotli, ChunkCodec::XzBrotli) };
+    Ok(EncodedChunk { data, source_sha256: hash, codec })
+}
+
 pub fn encode_best_chunk(source: &[u8], zstd_level: i32, cancel: &AtomicBool) -> Result<EncodedChunk, String> {
     let hash = Sha256::digest(source).into();
     let mut best = EncodedChunk {
@@ -88,9 +124,19 @@ pub fn decode_chunk(data: &[u8], source_len: usize, source_sha256: &[u8; 32]) ->
 }
 
 pub fn decode_chunk_codec(data: &[u8], source_len: usize, source_sha256: &[u8; 32], codec: ChunkCodec) -> Result<Vec<u8>, String> {
-    let mut source = if matches!(codec, ChunkCodec::Zstd | ChunkCodec::DeltaZstd) {
-        zstd::bulk::decompress(data, source_len).map_err(|e| format!("decompression failed: {e}"))?
-    } else { xz_decode(data, source_len)? };
+    let intermediate_limit = source_len.checked_add(1024 * 1024).ok_or("Chunk size overflow")?;
+    let mut source = match codec {
+        ChunkCodec::Zstd | ChunkCodec::DeltaZstd => zstd::bulk::decompress(data, source_len).map_err(|e| format!("decompression failed: {e}"))?,
+        ChunkCodec::Xz | ChunkCodec::DeltaXz => xz_decode(data, source_len)?,
+        ChunkCodec::BrotliXz => {
+            let inner = xz_decode(data, intermediate_limit)?;
+            brotli_decode(&inner, source_len)?
+        },
+        ChunkCodec::XzBrotli => {
+            let inner = brotli_decode(data, intermediate_limit)?;
+            xz_decode(&inner, source_len)?
+        },
+    };
     if matches!(codec, ChunkCodec::DeltaZstd | ChunkCodec::DeltaXz) { delta_decode(&mut source); }
     if source.len() != source_len || Sha256::digest(&source).as_slice() != source_sha256 {
         return Err("SHA-256 mismatch".into());
@@ -100,7 +146,7 @@ pub fn decode_chunk_codec(data: &[u8], source_len: usize, source_sha256: &[u8; 3
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_chunk, decode_chunk_codec, encode_best_chunk, encode_chunk, xz_encode, ChunkCodec};
+    use super::{brotli_encode, decode_chunk, decode_chunk_codec, encode_best_chunk, encode_chunk, encode_combined_chunk, xz_encode, ChunkCodec};
     use sha2::{Digest, Sha256};
     use std::sync::atomic::AtomicBool;
 
@@ -133,5 +179,21 @@ mod tests {
         assert!(ChunkCodec::from_id(99).is_err());
         let mut trailing = xz_encode(&source).unwrap(); trailing.push(1);
         assert!(decode_chunk_codec(&trailing, source.len(), &hash, ChunkCodec::Xz).is_err());
+    }
+
+    #[test]
+    fn combined_brotli_xz_roundtrips_in_both_orders() {
+        let source = b"PS1 sector data with repeated patterns 0123456789".repeat(500);
+        let hash: [u8; 32] = Sha256::digest(&source).into();
+        let brotli_xz = xz_encode(&brotli_encode(&source).unwrap()).unwrap();
+        let xz_brotli = brotli_encode(&xz_encode(&source).unwrap()).unwrap();
+        assert_eq!(decode_chunk_codec(&brotli_xz,source.len(),&hash,ChunkCodec::BrotliXz).unwrap(),source);
+        assert_eq!(decode_chunk_codec(&xz_brotli,source.len(),&hash,ChunkCodec::XzBrotli).unwrap(),source);
+        let best = encode_combined_chunk(&source,&AtomicBool::new(false)).unwrap();
+        assert_eq!(best.data.len(),brotli_xz.len().min(xz_brotli.len()));
+        assert!(matches!(best.codec,ChunkCodec::BrotliXz | ChunkCodec::XzBrotli));
+        assert_eq!(decode_chunk_codec(&best.data,source.len(),&hash,best.codec).unwrap(),source);
+        assert_eq!(ChunkCodec::from_id(5).unwrap(),ChunkCodec::BrotliXz);
+        assert_eq!(ChunkCodec::from_id(6).unwrap(),ChunkCodec::XzBrotli);
     }
 }
