@@ -4,12 +4,14 @@ PX1 is a Windows desktop utility that compresses one PlayStation BIN/CUE disc in
 
 ## What v0.1 supports
 
-- One CUE referencing one adjacent `BINARY` BIN with 2352-byte sectors. The BIN may contain multiple tracks. Other CUE layouts are rejected clearly.
+- One CUE referencing one `BINARY` BIN with 2352-byte sectors. The BIN may contain multiple tracks. PX1 locates it from the CUE by default; if the BIN was renamed or moved, the user can select it manually. Other CUE layouts are rejected clearly.
 - Independently compressed 4 MiB BIN chunks, exact CUE bytes, per-chunk and original-file SHA-256 hashes, and a whole-container SHA-256 footer.
 - Compress, Extract, and Verify desktop workflows with progress, cancellation, and a local log.
 - Optional disc metadata from the image's data track: ISO 9660 volume ID, `SYSTEM.CNF` boot executable, PlayStation serial, and region when detectable. Title and disc number can be entered as descriptions.
 
 Source filenames are filesystem labels, not evidence of disc identity. PX1 never infers a game title, region, serial, or disc number from them. Original BIN/CUE bytes and their SHA-256 hashes are authoritative. The app reads source files without modifying them, writes temporary outputs, and refuses to overwrite existing destinations.
+
+When a manually selected BIN has a different filename from the CUE's `FILE` entry, the PX1 records the selected source filename as optional metadata. Extraction names the restored BIN as the CUE expects, so the untouched CUE can locate it. The source BIN is not renamed or modified.
 
 `FILE` names in the CUE must be UTF-8 so an undecodable label cannot select the wrong BIN. UTF-8 CUEs with a byte-order mark are accepted; non-UTF-8 bytes elsewhere in a CUE are preserved exactly. Multi-BIN layouts, CHD conversion, `.px1md`, and direct emulator loading are outside v0.1.
 

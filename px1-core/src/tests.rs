@@ -65,6 +65,33 @@ fn generic_names_detect_disc_and_roundtrip_exactly() {
 }
 
 #[test]
+fn manual_bin_selection_preserves_bytes_and_restores_cue_filename() {
+    let dir=tempfile::tempdir().unwrap();
+    let cue=source(dir.path());
+    let original_bin=dir.path().join("20261007_021434.BIN");
+    let selected_bin=dir.path().join("renamed_dump.bin");
+    fs::rename(&original_bin,&selected_bin).unwrap();
+    let original_bytes=fs::read(&selected_bin).unwrap();
+    let cue_bytes=fs::read(&cue).unwrap();
+    assert!(container::source_info(&cue).unwrap_err().contains("Select the BIN manually"));
+    let info=container::source_info_with_bin(&cue,Some(&selected_bin)).unwrap();
+    assert_eq!(info.referenced_bin_name,"20261007_021434.BIN");
+    assert_eq!(info.disc.serial.as_deref(),Some("SLUS-00892"));
+    let px=dir.path().join("manual.px1");
+    let cancel=AtomicBool::new(false);
+    let report=container::compress_with_bin(&cue,Some(&selected_bin),&px,1,None,None,&cancel,|_|{}).unwrap();
+    assert_eq!(report.manifest.bin.name,"20261007_021434.BIN");
+    assert_eq!(report.manifest.bin.source_name.as_deref(),Some("renamed_dump.bin"));
+    assert!(report.container_verified && report.bin_verified && report.cue_verified);
+    let restored=dir.path().join("restored"); fs::create_dir(&restored).unwrap();
+    extract(&px,&restored,&cancel,|_|{}).unwrap();
+    assert_eq!(fs::read(restored.join("20261007_021434.BIN")).unwrap(),original_bytes);
+    assert_eq!(fs::read(restored.join("20261007_021434.CUE")).unwrap(),cue_bytes);
+    assert_eq!(fs::read(&selected_bin).unwrap(),original_bytes);
+    assert_eq!(fs::read(&cue).unwrap(),cue_bytes);
+}
+
+#[test]
 fn invalid_sources_outputs_and_corruption_are_rejected() {
     let dir=tempfile::tempdir().unwrap(); let cue=source(dir.path());
     let cancel=AtomicBool::new(false); let px=dir.path().join("disc.px1");

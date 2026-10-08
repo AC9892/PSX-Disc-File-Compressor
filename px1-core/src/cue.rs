@@ -4,7 +4,7 @@ const MAX_CUE_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct CueSource {
-    pub cue_path: PathBuf, pub bin_path: PathBuf, pub cue_bytes: Vec<u8>,
+    pub cue_path: PathBuf, pub bin_path: PathBuf, pub referenced_bin_name: String, pub cue_bytes: Vec<u8>,
     pub track_count: u32, pub data_track_count: u32, pub data_track_start_sector: u64,
 }
 
@@ -23,7 +23,9 @@ fn cue_time(value: &str) -> Option<u64> {
     Some((minutes*60+seconds)*75+frames)
 }
 
-pub fn parse(path: &Path) -> Result<CueSource, String> {
+pub fn parse(path: &Path) -> Result<CueSource, String> { parse_with_bin(path, None) }
+
+pub fn parse_with_bin(path: &Path, selected_bin: Option<&Path>) -> Result<CueSource, String> {
     let file = File::open(path).map_err(|e| format!("Cannot read CUE: {e}"))?;
     if file.metadata().map_err(|e| format!("Cannot stat CUE: {e}"))?.len() > MAX_CUE_BYTES {
         return Err("CUE is too large".into());
@@ -105,9 +107,16 @@ pub fn parse(path: &Path) -> Result<CueSource, String> {
     if files.len() != 1 || tracks == 0 || data_tracks == 0 || !index_for_track {
         return Err("Unsupported CUE layout: PX1 v0.1 requires one referenced BIN, a data track, and INDEX 01 for each track".into());
     }
-    let bin_path = path.parent().unwrap_or(Path::new(".")).join(&files[0]);
-    if !bin_path.is_file() { return Err(format!("Referenced BIN is missing: {}", bin_path.display())); }
+    let bin_path = selected_bin.map(Path::to_path_buf)
+        .unwrap_or_else(|| path.parent().unwrap_or(Path::new(".")).join(&files[0]));
+    if !bin_path.is_file() {
+        return Err(if selected_bin.is_some() {
+            format!("Selected BIN is missing: {}", bin_path.display())
+        } else {
+            format!("Referenced BIN is missing: {}. Select the BIN manually if it was renamed.", bin_path.display())
+        });
+    }
     let sectors = bin_path.metadata().map_err(|e| format!("Cannot stat BIN: {e}"))?.len() / 2352;
     if max_index_sector >= sectors { return Err("Invalid CUE: INDEX points beyond the referenced BIN".into()); }
-    Ok(CueSource { cue_path: path.to_path_buf(), bin_path, cue_bytes, track_count: tracks, data_track_count: data_tracks, data_track_start_sector: data_track_start_sector.ok_or("Invalid CUE: data track has no INDEX 01")? })
+    Ok(CueSource { cue_path: path.to_path_buf(), bin_path, referenced_bin_name: files.remove(0), cue_bytes, track_count: tracks, data_track_count: data_tracks, data_track_start_sector: data_track_start_sector.ok_or("Invalid CUE: data track has no INDEX 01")? })
 }

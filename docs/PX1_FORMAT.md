@@ -1,6 +1,6 @@
 # PX1 format version 1
 
-PX1 stores one PlayStation BIN/CUE disc without changing either source file. It is a binary container with a UTF-8 JSON manifest, the exact CUE bytes, an indexed sequence of independently compressed BIN chunks, and a whole-container SHA-256 footer. All integers in the binary structures are little endian. Offsets are absolute byte offsets from the start of the file. Version 1 supports one CUE that references one adjacent BINARY BIN file; the BIN may contain multiple tracks.
+PX1 stores one PlayStation BIN/CUE disc without changing either source file. It is a binary container with a UTF-8 JSON manifest, the exact CUE bytes, an indexed sequence of independently compressed BIN chunks, and a whole-container SHA-256 footer. All integers in the binary structures are little endian. Offsets are absolute byte offsets from the start of the file. Version 1 supports one CUE that references one BINARY BIN file; the BIN may contain multiple tracks. The BIN can be selected manually when its current path no longer matches the CUE's `FILE` entry.
 
 ## File layout
 
@@ -58,7 +58,7 @@ The manifest is UTF-8 JSON. Required fields:
 }
 ```
 
-`bin.name` and `cue.name` are original filesystem labels used for extraction. They must be single safe filenames, without directory components, common Windows reserved device names, trailing spaces or dots, or Windows-invalid characters. They do **not** establish disc identity. The CUE byte sequence is stored separately and is never regenerated. The two file hashes are SHA-256 of the original complete files. `disc` fields can be null when unknown. A detected serial comes from the boot executable in `SYSTEM.CNF` on an ISO 9660 data track. User entered title and disc number are descriptive only; they cannot change the stored bytes or hashes. Unknown JSON fields may be ignored by a compatible reader.
+`bin.name` and `cue.name` are safe filenames used for extraction. `bin.name` is the CUE's `FILE` label, so the restored BIN can be found by the unchanged CUE. If the user manually selected a BIN with a different current filename, `bin.source_name` optionally records that source label as descriptive metadata. These names must not establish disc identity. Extraction names must be single safe filenames, without directory components, common Windows reserved device names, trailing spaces or dots, or Windows-invalid characters. The CUE byte sequence is stored separately and is never regenerated. The two file hashes are SHA-256 of the original complete files. `disc` fields can be null when unknown. A detected serial comes from the boot executable in `SYSTEM.CNF` on an ISO 9660 data track. User entered title and disc number are descriptive only; they cannot change the stored bytes or hashes. Unknown JSON fields may be ignored by a compatible reader.
 
 ## Chunk table
 

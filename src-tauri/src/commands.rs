@@ -1,4 +1,4 @@
-use px1_core::{self as px, container::source_info, DiscInfo, Manifest, Report};
+use px1_core::{self as px, container::{source_info_with_bin, compress_with_bin}, DiscInfo, Manifest, Report};
 use std::{fs::OpenOptions, io::Write, path::PathBuf, sync::{Arc,atomic::{AtomicBool,Ordering}}};
 use tauri::{Emitter, State};
 
@@ -15,7 +15,10 @@ fn start(state: &JobState) -> Result<(BusyGuard,Arc<AtomicBool>),String> {
 }
 
 #[tauri::command]
-pub fn inspect_cue(path: String) -> Result<DiscInfo,String> { source_info(&PathBuf::from(path)) }
+pub fn inspect_cue(path: String, bin_path: Option<String>) -> Result<DiscInfo,String> {
+    let selected = bin_path.map(PathBuf::from);
+    source_info_with_bin(&PathBuf::from(path), selected.as_deref())
+}
 
 #[derive(serde::Serialize)]
 pub struct Px1Info { manifest: Manifest, px1_size: u64, container_sha256: String }
@@ -37,11 +40,12 @@ pub fn save_log(path: String, content: String) -> Result<(),String> {
 }
 
 #[tauri::command]
-pub async fn compress_disc(app: tauri::AppHandle, state: State<'_,JobState>, cue_path: String, output_path: String, level: i32, title: Option<String>, disc_number: Option<u32>) -> Result<Report,String> {
+pub async fn compress_disc(app: tauri::AppHandle, state: State<'_,JobState>, cue_path: String, bin_path: Option<String>, output_path: String, level: i32, title: Option<String>, disc_number: Option<u32>) -> Result<Report,String> {
     let (guard,cancel)=start(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         let _guard=guard;
-        px::compress(&PathBuf::from(cue_path),&PathBuf::from(output_path),level,title,disc_number,&cancel,|p| { let _=app.emit("px1-progress",p); })
+        let selected = bin_path.map(PathBuf::from);
+        compress_with_bin(&PathBuf::from(cue_path),selected.as_deref(),&PathBuf::from(output_path),level,title,disc_number,&cancel,|p| { let _=app.emit("px1-progress",p); })
     }).await.map_err(|e|format!("Worker failed: {e}"))?
 }
 

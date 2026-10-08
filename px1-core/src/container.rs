@@ -13,7 +13,11 @@ const MAX_CUE: u64 = 8 * 1024 * 1024;
 const RAW_SECTOR_SIZE: u64 = 2352;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileInfo { pub name: String, pub size: u64, pub sha256: String }
+pub struct FileInfo {
+    pub name: String, pub size: u64, pub sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_name: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
@@ -25,7 +29,7 @@ pub struct Manifest {
 #[derive(Debug, Clone, Serialize)]
 pub struct DiscInfo {
     pub cue_path: String, pub bin_path: String, pub bin_size: u64, pub cue_size: u64,
-    pub track_count: u32, pub data_track_count: u32, pub disc: DiscMetadata,
+    pub referenced_bin_name: String, pub track_count: u32, pub data_track_count: u32, pub disc: DiscMetadata,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -148,17 +152,31 @@ fn hash_file(path: &Path, total: u64, cancel: &AtomicBool, progress: &impl Fn(Pr
 }
 
 pub fn source_info(path: &Path) -> Result<DiscInfo, String> {
-    let src = cue::parse(path)?;
+    source_info_with_bin(path, None)
+}
+
+pub fn source_info_with_bin(path: &Path, selected_bin: Option<&Path>) -> Result<DiscInfo, String> {
+    let src = cue::parse_with_bin(path, selected_bin)?;
     let bin_size = src.bin_path.metadata().map_err(|e| err("Cannot stat BIN",e))?.len();
     validate_bin_size(bin_size)?;
-    Ok(DiscInfo { cue_path:src.cue_path.to_string_lossy().into(), bin_path:src.bin_path.to_string_lossy().into(), bin_size, cue_size:src.cue_bytes.len() as u64, track_count:src.track_count, data_track_count:src.data_track_count, disc:metadata::detect(&src.bin_path,src.data_track_start_sector) })
+    if !safe_name(&src.referenced_bin_name) { return Err("Unsafe BIN filename in CUE".into()); }
+    Ok(DiscInfo { cue_path:src.cue_path.to_string_lossy().into(), bin_path:src.bin_path.to_string_lossy().into(), bin_size, cue_size:src.cue_bytes.len() as u64, referenced_bin_name:src.referenced_bin_name, track_count:src.track_count, data_track_count:src.data_track_count, disc:metadata::detect(&src.bin_path,src.data_track_start_sector) })
 }
 
 pub fn compress(path: &Path, output: &Path, level: i32, title: Option<String>, disc_number: Option<u32>, cancel: &AtomicBool, progress: impl Fn(Progress)) -> Result<Report, String> {
+    compress_with_bin(path, None, output, level, title, disc_number, cancel, progress)
+}
+
+pub fn compress_with_bin(path: &Path, selected_bin: Option<&Path>, output: &Path, level: i32, title: Option<String>, disc_number: Option<u32>, cancel: &AtomicBool, progress: impl Fn(Progress)) -> Result<Report, String> {
     if !(-7..=22).contains(&level) { return Err("Invalid zstd level".into()); }
-    let src = cue::parse(path)?;
+    let src = cue::parse_with_bin(path, selected_bin)?;
     let bin_size = src.bin_path.metadata().map_err(|e| err("Cannot stat BIN",e))?.len();
     validate_bin_size(bin_size)?;
+    if !safe_name(&src.referenced_bin_name) { return Err("Unsafe BIN filename in CUE".into()); }
+    let cue_name = file_name(&src.cue_path)?;
+    if src.referenced_bin_name.eq_ignore_ascii_case(&cue_name) { return Err("CUE and BIN output filenames must differ".into()); }
+    let source_bin_name = file_name(&src.bin_path)?;
+    let source_name = (source_bin_name != src.referenced_bin_name).then_some(source_bin_name);
     let cue_size = src.cue_bytes.len() as u64;
     let out_name = output.file_name().ok_or("Invalid output filename")?.to_string_lossy();
     if !out_name.to_ascii_lowercase().ends_with(".px1") { return Err("Output filename must end in .px1".into()); }
@@ -173,7 +191,7 @@ pub fn compress(path: &Path, output: &Path, level: i32, title: Option<String>, d
     disc.title = title.filter(|x|!x.trim().is_empty());
     disc.disc_number = disc_number.filter(|x|*x>0);
     let chunks = bin_size.div_ceil(CHUNK_SIZE as u64);
-    let manifest = Manifest { format_version:1, created_utc:chrono::Utc::now().to_rfc3339(), bin:FileInfo{name:file_name(&src.bin_path)?,size:bin_size,sha256:bin_hash}, cue:FileInfo{name:file_name(&src.cue_path)?,size:cue_size,sha256:sha_bytes(&src.cue_bytes)}, disc, compression:"zstd".into(),zstd_level:level,chunk_size:CHUNK_SIZE as u32,chunk_count:chunks };
+    let manifest = Manifest { format_version:1, created_utc:chrono::Utc::now().to_rfc3339(), bin:FileInfo{name:src.referenced_bin_name,size:bin_size,sha256:bin_hash,source_name}, cue:FileInfo{name:cue_name,size:cue_size,sha256:sha_bytes(&src.cue_bytes),source_name:None}, disc, compression:"zstd".into(),zstd_level:level,chunk_size:CHUNK_SIZE as u32,chunk_count:chunks };
     let manifest_bytes = serde_json::to_vec(&manifest).map_err(|e| err("Serialize manifest",e))?;
     if manifest_bytes.len() as u64 > MAX_MANIFEST { return Err("Manifest is too large".into()); }
     let table_len = chunks.checked_mul(ENTRY_SIZE).ok_or("Chunk table too large")?;

@@ -6,8 +6,8 @@ import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import './styles.css';
 
 type Disc = { platform?: string; media?: string; serial?: string; region?: string; volume_id?: string; boot_executable?: string; title?: string; disc_number?: number };
-type Source = { cue_path: string; bin_path: string; bin_size: number; cue_size: number; track_count: number; data_track_count: number; disc: Disc };
-type Manifest = { format_version: number; created_utc: string; bin: { name: string; size: number; sha256: string }; cue: { name: string; size: number; sha256: string }; disc: Disc; compression: string; zstd_level: number; chunk_size: number; chunk_count: number };
+type Source = { cue_path: string; bin_path: string; referenced_bin_name: string; bin_size: number; cue_size: number; track_count: number; data_track_count: number; disc: Disc };
+type Manifest = { format_version: number; created_utc: string; bin: { name: string; source_name?: string; size: number; sha256: string }; cue: { name: string; size: number; sha256: string }; disc: Disc; compression: string; zstd_level: number; chunk_size: number; chunk_count: number };
 type PxInfo = { manifest: Manifest; px1_size: number; container_sha256: string };
 type Report = PxInfo & { chunks_verified: number; container_verified: boolean; bin_verified: boolean; cue_verified: boolean };
 type Progress = { stage: string; done: number; total: number; bytes_written: number; elapsed_seconds: number };
@@ -23,7 +23,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <section id="compressPane" class="page">
       <fieldset><legend>Source disc</legend>
         <div class="field pathfield"><label for="cuePath">CUE:</label><input id="cuePath" readonly placeholder="Select a CUE file"><button id="browseCue" title="Browse for CUE" aria-label="Browse for CUE">…</button></div>
-        <div class="field pathfield"><label for="binPath">BIN:</label><input id="binPath" readonly placeholder="Located from CUE"></div>
+        <div class="field pathfield"><label for="binPath">BIN:</label><input id="binPath" readonly placeholder="Located from CUE"><button id="browseBin" title="Select BIN manually" aria-label="Select BIN manually">…</button></div>
         <div id="sourceSummary" class="properties muted">Select or drop a CUE file.</div>
       </fieldset>
       <fieldset><legend>Output</legend>
@@ -82,6 +82,7 @@ const properties = (rows: [string, string][]) => `<dl>${rows.map(([key, value]) 
 
 let mode: Mode = 'compress';
 let source: Source | null = null;
+let manualBinPath: string | null = null;
 let extractInfo: PxInfo | null = null;
 let verifyInfo: PxInfo | null = null;
 let busy = false;
@@ -98,6 +99,7 @@ function log(message: string) {
 function setStatus(value: string) { text('status', value); }
 function updateButtons() {
   el<HTMLButtonElement>('doCompress').disabled = busy || !source || !input('pxOutput').value;
+  el<HTMLButtonElement>('browseBin').disabled = busy || !input('cuePath').value;
   el<HTMLButtonElement>('doExtract').disabled = busy || !extractInfo || !input('extractDir').value;
   el<HTMLButtonElement>('doVerify').disabled = busy || !verifyInfo;
   document.querySelectorAll<HTMLButtonElement>('.modebar button').forEach(button => button.disabled = busy);
@@ -124,31 +126,36 @@ function showResult(message: string, isError = false) {
   result.textContent = message;
 }
 
-async function loadCue(path: string) {
+async function loadCue(path: string, selectedBin: string | null = null) {
   const loadId = ++cueLoadId;
   if (input('cuePath').value !== path) {
     input('title').value = '';
     input('discNumber').value = '';
   }
   source = null;
+  manualBinPath = selectedBin;
   input('cuePath').value = path;
-  input('binPath').value = '';
+  input('binPath').value = selectedBin || '';
   text('sourceSummary', 'Inspecting CUE…');
   clearResult();
   updateButtons();
   try {
-    const inspected = await invoke<Source>('inspect_cue', { path });
+    const inspected = await invoke<Source>('inspect_cue', { path, binPath: selectedBin });
     if (loadId !== cueLoadId) return;
     source = inspected;
     input('binPath').value = source.bin_path;
     input('pxOutput').value = path.replace(/\.cue$/i, '.px1');
-    el<HTMLElement>('sourceSummary').innerHTML = properties([
+    const rows: [string, string][] = [
       ['Platform:', known(source.disc.platform)], ['Serial:', known(source.disc.serial)],
       ['Region:', known(source.disc.region)], ['Image size:', size(source.bin_size)],
       ['Tracks:', `${source.data_track_count} data / ${source.track_count} total`],
       ['Disc files:', '1 BIN, 1 CUE'],
       ['Estimated PX1 space:', `up to ${size(source.bin_size + source.cue_size + 16 * 1024 * 1024)}`]
-    ]);
+    ];
+    if (base(source.bin_path) !== source.referenced_bin_name) {
+      rows.push(['Restored BIN name:', source.referenced_bin_name]);
+    }
+    el<HTMLElement>('sourceSummary').innerHTML = properties(rows);
     setStatus(`Loaded ${base(path)}`);
     log(`Loaded ${base(path)}; located ${base(source.bin_path)} (${source.bin_size} bytes)`);
   } catch (error) {
@@ -184,13 +191,14 @@ async function loadPx1(path: string, target: 'extract' | 'verify') {
       ['Disc:', known(manifest.disc.disc_number)],
       ['Original size:', size(manifest.bin.size + manifest.cue.size)], ['PX1 size:', size(info.px1_size)],
       ['Compression:', `Zstandard (level ${manifest.zstd_level})`],
-      ['Original files:', `${manifest.bin.name}, ${manifest.cue.name}`]
+      ['Restored files:', `${manifest.bin.name}, ${manifest.cue.name}`]
     ];
     summary.innerHTML = properties(rows) + `<details class="technical"><summary>Technical details</summary>${properties([
       ['Created:', manifest.created_utc], ['Format:', `PX1 v${manifest.format_version}`],
       ['Region:', known(manifest.disc.region)], ['Title:', known(manifest.disc.title)],
       ['Disc:', known(manifest.disc.disc_number)], ['Compression:', `Zstandard (level ${manifest.zstd_level})`],
-      ['Original files:', `${manifest.bin.name}, ${manifest.cue.name}`],
+      ['Restored files:', `${manifest.bin.name}, ${manifest.cue.name}`],
+      ...(manifest.bin.source_name ? [['Source BIN label:', manifest.bin.source_name] as [string, string]] : []),
       ['Volume ID:', known(manifest.disc.volume_id)], ['Boot executable:', known(manifest.disc.boot_executable)],
       ['BIN SHA-256:', manifest.bin.sha256], ['CUE SHA-256:', manifest.cue.sha256],
       ['Container SHA-256:', info.container_sha256]
@@ -233,6 +241,12 @@ async function run<T>(name: string, args: Record<string, unknown>, success: (rep
 
 document.querySelectorAll<HTMLButtonElement>('.modebar button').forEach(button => button.onclick = () => setMode(button.dataset.mode as Mode));
 el<HTMLButtonElement>('browseCue').onclick = async () => { const path = await open({ multiple: false, filters: [{ name: 'CUE sheet', extensions: ['cue'] }] }); if (typeof path === 'string') await loadCue(path); };
+el<HTMLButtonElement>('browseBin').onclick = async () => {
+  const cuePath = input('cuePath').value;
+  if (!cuePath) return;
+  const path = await open({ multiple: false, filters: [{ name: 'BIN image', extensions: ['bin'] }] });
+  if (typeof path === 'string') await loadCue(cuePath, path);
+};
 el<HTMLButtonElement>('browseOutput').onclick = async () => { const path = await save({ defaultPath: input('pxOutput').value || undefined, filters: [{ name: 'PX1 disc', extensions: ['px1'] }] }); if (path) { input('pxOutput').value = path; updateButtons(); } };
 el<HTMLButtonElement>('browseExtract').onclick = async () => { const path = await open({ multiple: false, filters: [{ name: 'PX1 disc', extensions: ['px1'] }] }); if (typeof path === 'string') await loadPx1(path, 'extract'); };
 el<HTMLButtonElement>('browseVerify').onclick = async () => { const path = await open({ multiple: false, filters: [{ name: 'PX1 disc', extensions: ['px1'] }] }); if (typeof path === 'string') await loadPx1(path, 'verify'); };
@@ -244,7 +258,7 @@ el<HTMLButtonElement>('doCompress').onclick = () => {
   const output = input('pxOutput').value;
   const number = Number(input('discNumber').value);
   lastOutput = output;
-  void run<Report>('compress_disc', { cuePath: source.cue_path, outputPath: output, level: Number(input('level').value), title: input('title').value || null, discNumber: Number.isInteger(number) && number > 0 ? number : null }, report => {
+  void run<Report>('compress_disc', { cuePath: source.cue_path, binPath: manualBinPath, outputPath: output, level: Number(input('level').value), title: input('title').value || null, discNumber: Number.isInteger(number) && number > 0 ? number : null }, report => {
     const original = report.manifest.bin.size + report.manifest.cue.size;
     const saved = original - report.px1_size;
     const change = saved >= 0 ? `Saved: ${size(saved)}` : `Larger: ${size(-saved)}`;
