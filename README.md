@@ -52,7 +52,7 @@ Run the slower, roughly 700 MiB synthetic round-trip test separately:
 cargo test --manifest-path px1-core/Cargo.toml full_size_disc_streams_and_roundtrips -- --ignored
 ```
 
-`px1-core` has no Tauri or network dependency. Its `compression` module handles zstd, XZ, and Brotli chunks without PlayStation sector assumptions; CUE, metadata, and container modules provide the PX1-specific rules. The new app reads older PX1 v1.0 archives, Best Size v1.1 archives, and two-layer v1.2 archives. Older app builds cannot read versions they do not support. See the [format specification](docs/PX1_FORMAT.md) and [codec benchmark](docs/COMPRESSION_BENCHMARK.md).
+`px1-core` has no Tauri or network dependency. Its `compression` module handles zstd, XZ, and Brotli chunks without PlayStation sector assumptions; CUE, metadata, and container modules provide the PX1-specific rules. The app reads PX1 v1.0, Best Size v1.1, and two-layer v1.2 archives. See the [format specification](docs/PX1_FORMAT.md) and [codec benchmark](docs/COMPRESSION_BENCHMARK.md).
 
 ## Upload this repository
 
