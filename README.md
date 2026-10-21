@@ -1,6 +1,8 @@
-# PX1 Disc Compressor
+# PSX Disc File Compressor
 
-PX1 is a Windows desktop utility that compresses one PlayStation BIN/CUE disc into a `.px1` file, verifies it, and restores the original BIN and CUE byte for byte. It uses Tauri 2, TypeScript/HTML/CSS, Rust, zstd, XZ, Brotli, and SHA-256.
+PSX Disc File Compressor is a Windows desktop utility that compresses one PlayStation BIN/CUE disc into a `.px1` file, verifies it, and restores the original BIN and CUE byte for byte. The current application and archive format use the PX1 name. It uses Tauri 2, TypeScript/HTML/CSS, Rust, zstd, XZ, Brotli, and SHA-256.
+
+> **Disc support in v0.1:** One CUE referencing one `BINARY` BIN made of 2352-byte sectors. Multiple tracks within that single BIN are supported. Multi-BIN discs and other CUE layouts are not supported yet.
 
 ## What v0.1 supports
 
