@@ -1,8 +1,22 @@
 # PSX Disc File Compressor
 
-PSX Disc File Compressor is a Windows desktop utility that compresses one PlayStation BIN/CUE disc into a `.px1` file, verifies it, and restores the original BIN and CUE byte for byte. The current application and archive format use the PX1 name. It uses Tauri 2, TypeScript/HTML/CSS, Rust, zstd, XZ, Brotli, and SHA-256.
+PSX Disc File Compressor is a Windows desktop utility that compresses a PlayStation BIN/CUE disc into a `.px1` file, verifies it, and restores the original BIN and CUE byte for byte. A separate PS2 tab is under development for ISO and BIN/CUE to CHD conversion. The current PS1 application and archive format use the PX1 name. It uses Tauri 2, TypeScript/HTML/CSS, Rust, zstd, XZ, Brotli, and SHA-256.
 
 > **Disc support in v0.1:** One CUE referencing one `BINARY` BIN made of 2352-byte sectors. Multiple tracks within that single BIN are supported. Multi-BIN discs and other CUE layouts are not supported yet.
+
+## PS2 CHD support (development build)
+
+The new **PS2 / CHD** tab inspects 2048-byte-sector PS2 DVD ISO images and single-BIN, 2352-byte-sector PS2 CD CUE images. It identifies PS2 from `SYSTEM.CNF` `BOOT2`, not the filename. Unidentified images show **Unknown PlayStation Disc** and require manual PS2 selection before compression. ISO 9660 volume ID and boot serial are shown when readable. PS1 BIN/CUE compression remains on the existing PX1 tab.
+
+Install [`chdman` from MAME](https://docs.mamedev.org/tools/chdman.html) and place `chdman.exe` beside the portable app EXE, or put its folder on `PATH`. PS2 DVD ISO uses `createdvd` / `extractdvd`; PS2 CD BIN/CUE uses `createcd` / `extractcd`. `chdman verify` runs after creation. A temporary extraction is compared against the original SHA-256 hashes. The app stores original filenames, hashes, and exact CUE bytes in an adjacent `.chd.json` file; **keep this sidecar with the CHD**. The source images are never deleted or modified. The batch button handles multiple selected ISO/CUE images sequentially and logs each result.
+
+CHD integrity alone does not prove exact source bytes. The app reports exact restoration only when extracted ISO or BIN/CUE bytes match the recorded original hashes. A CHD without this app's sidecar can be verified and extracted, but its original filenames and bytes cannot be proven. CHD conversion may normalize CD layouts; a mismatch is reported and the source should be retained. PS2 multi-BIN CUE and PS3 images are not supported.
+
+With MAME `chdman` 0.289, synthetic PS2 DVD ISO and single-BIN CD CUE images both passed CHD creation, verification, extraction, and original-file SHA-256 comparison. A full Dragon Ball Z: Budokai Tenkaichi 3 DVD ISO also passed: 3,020,816,384 source bytes became a 1,751,727,635-byte CHD (57.99% of source size; 1.182 GiB saved), and the explicit restored ISO matched the source hash. This is one real DVD test, not a claim of compatibility with every PS2 dump.
+
+For PS2 CD conversion, the BIN must be beside the CUE with the exact filename in its `FILE` line. A manually relocated or renamed BIN remains supported by the PS1 PX1 workflow, but cannot yet be staged for PS2 CHD creation. Select the CUE rather than the BIN. The app also refuses to overwrite any existing output.
+
+To test with your own PS2 dump: put `chdman.exe` on `PATH`, start the app with `npm run tauri dev`, open **PS2 / CHD**, and select the Budokai Tenkaichi 3 ISO. Choose a new CHD output path with enough free space for the CHD plus a temporary extracted ISO. After compression, confirm the result says exact restoration verified, then select that CHD, run **Verify CHD**, and restore it to an empty folder. Compare the restored ISO SHA-256 with the original. Repeat with a single-BIN PS2 CD CUE, then select multiple ISO/CUE images in **Batch ISO/CUE** and review each log entry. A CHD created elsewhere can be inspected, verified, and extracted, but without original hashes the app reports its exactness as unproven.
 
 ## What v0.1 supports
 

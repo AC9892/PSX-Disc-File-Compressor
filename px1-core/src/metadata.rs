@@ -47,7 +47,7 @@ fn iso_file(file: &mut File, base: u64, root_sector: u64, root_size: usize, want
     None
 }
 
-fn serial_from_executable(exe: &str) -> Option<(String, &'static str)> {
+pub fn serial_from_executable(exe: &str) -> Option<(String, &'static str)> {
     let normalized = exe.replace('_', "-").replace('.', "").to_ascii_uppercase();
     let bytes = normalized.as_bytes();
     if bytes.len() != 10 || bytes[4] != b'-' || !bytes[5..].iter().all(u8::is_ascii_digit) { return None; }
@@ -77,11 +77,12 @@ pub fn detect(path: &Path, data_track_start_sector: u64) -> DiscMetadata {
     let cnf = String::from_utf8_lossy(&cnf);
     for line in cnf.lines() {
         let Some((key, val)) = line.split_once('=') else { continue };
-        if !key.trim().eq_ignore_ascii_case("BOOT") { continue; }
+        let ps2 = key.trim().eq_ignore_ascii_case("BOOT2");
+        if !ps2 && !key.trim().eq_ignore_ascii_case("BOOT") { continue; }
         let value = val.trim().trim_matches('"');
         let exe = value.rsplit(['\\', '/']).next().unwrap_or(value).split(';').next().unwrap_or("").trim();
         if exe.is_empty() { continue; }
-        out.platform = Some("PlayStation".into());
+        out.platform = Some(if ps2 { "PlayStation 2" } else { "PlayStation" }.into());
         out.boot_executable = Some(value.to_string());
         if let Some((serial, region)) = serial_from_executable(exe) {
             out.region = Some(region.into());

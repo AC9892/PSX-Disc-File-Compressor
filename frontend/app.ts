@@ -11,13 +11,16 @@ type Manifest = { format_version: number; format_minor?: number; created_utc: st
 type PxInfo = { manifest: Manifest; px1_size: number; container_sha256: string };
 type Report = PxInfo & { chunks_verified: number; container_verified: boolean; bin_verified: boolean; cue_verified: boolean };
 type Progress = { stage: string; done: number; total: number; bytes_written: number; elapsed_seconds: number };
-type Mode = 'compress' | 'extract' | 'verify';
+type Mode = 'compress' | 'extract' | 'verify' | 'ps2';
+type Ps2Source = { path: string; platform: string; media: string; format: string; serial?: string; volume_id?: string; title?: string; files: string[]; original_size: number; compressed_size?: number; confidence: string };
+type ChdReport = { manifest: { disc: Ps2Source; files: { name: string; size: number; sha256: string }[]; chd_size: number; exact_restoration_verified: boolean }; verified: boolean; warning?: string };
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <nav class="modebar" aria-label="Mode">
     <button data-mode="compress" class="selected">Compress</button>
     <button data-mode="extract">Extract</button>
     <button data-mode="verify">Verify</button>
+    <button data-mode="ps2">PS2 / CHD</button>
   </nav>
   <main>
     <section id="compressPane" class="page">
@@ -53,6 +56,19 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       </fieldset>
       <fieldset><legend>Disc information</legend><div id="verifySummary" class="properties muted">Verification checks the complete PX1 without extracting it.</div></fieldset>
       <div class="pageActions"><button id="doVerify" class="defaultAction" disabled>Verify</button></div>
+    </section>
+    <section id="ps2Pane" class="page" hidden>
+      <fieldset><legend>PS2 source</legend>
+        <div class="field pathfield"><label for="ps2Path">Disc:</label><input id="ps2Path" readonly placeholder="Select ISO, CUE, or CHD"><button id="browsePs2">…</button></div>
+        <div class="field pathfield"><label for="ps2Bin">BIN:</label><input id="ps2Bin" readonly placeholder="Located from CUE"><button id="browsePs2Bin">…</button></div>
+        <div id="ps2Summary" class="properties muted">Select a PS2 disc image. Place chdman.exe beside the app or on PATH.</div>
+        <div class="field shortfield"><label for="ps2Platform">Platform:</label><select id="ps2Platform"><option value="auto">Auto detect</option><option value="PlayStation 2">PlayStation 2 (manual)</option></select></div>
+      </fieldset>
+      <fieldset><legend>Output</legend>
+        <div class="field pathfield"><label for="ps2Output">CHD:</label><input id="ps2Output" placeholder="Output .chd path"><button id="browsePs2Output">…</button></div>
+        <div class="field pathfield"><label for="ps2Dir">Restore:</label><input id="ps2Dir" readonly placeholder="Choose output folder"><button id="browsePs2Dir">…</button></div>
+      </fieldset>
+      <div class="pageActions"><button id="doPs2Compress">Compress</button><button id="doPs2Verify">Verify CHD</button><button id="doPs2Extract">Restore</button><button id="doPs2Batch">Batch ISO/CUE</button></div>
     </section>
     <section id="activity" class="activity" hidden aria-live="polite">
       <strong id="activityTitle">Working…</strong><progress id="progress" max="100" value="0"></progress>
@@ -91,6 +107,8 @@ let lastOutput = '';
 let cueLoadId = 0;
 let extractLoadId = 0;
 let verifyLoadId = 0;
+let ps2Source: Ps2Source | null = null;
+let ps2BinPath: string | null = null;
 
 function log(message: string) {
   const pane = el<HTMLPreElement>('log');
@@ -103,6 +121,10 @@ function updateButtons() {
   el<HTMLButtonElement>('browseBin').disabled = busy || !input('cuePath').value;
   el<HTMLButtonElement>('doExtract').disabled = busy || !extractInfo || !input('extractDir').value;
   el<HTMLButtonElement>('doVerify').disabled = busy || !verifyInfo;
+  el<HTMLButtonElement>('doPs2Compress').disabled = busy || !ps2Source || ps2Source.format === 'CHD' || !input('ps2Output').value;
+  el<HTMLButtonElement>('doPs2Verify').disabled = busy || ps2Source?.format !== 'CHD';
+  el<HTMLButtonElement>('doPs2Extract').disabled = busy || ps2Source?.format !== 'CHD' || !input('ps2Dir').value;
+  el<HTMLButtonElement>('doPs2Batch').disabled = busy;
   document.querySelectorAll<HTMLButtonElement>('.modebar button').forEach(button => button.disabled = busy);
 }
 function clearResult() {
@@ -112,7 +134,7 @@ function clearResult() {
 }
 function setMode(next: Mode) {
   mode = next;
-  for (const name of ['compress', 'extract', 'verify'] as Mode[]) {
+  for (const name of ['compress', 'extract', 'verify', 'ps2'] as Mode[]) {
     el<HTMLElement>(`${name}Pane`).hidden = name !== next;
     document.querySelector<HTMLButtonElement>(`[data-mode="${name}"]`)!.classList.toggle('selected', name === next);
   }
@@ -219,8 +241,9 @@ async function run<T>(name: string, args: Record<string, unknown>, success: (rep
   busy = true;
   clearResult();
   el<HTMLElement>('activity').hidden = false;
+  el<HTMLButtonElement>('cancel').hidden = name.endsWith('_ps2');
   el<HTMLProgressElement>('progress').value = 0;
-  text('activityTitle', 'Starting…');
+  text('activityTitle', name.endsWith('_ps2') ? 'Running chdman and checking restored hashes…' : 'Starting…');
   text('jobNumbers', '');
   setStatus('Starting…');
   updateButtons();
@@ -252,6 +275,65 @@ el<HTMLButtonElement>('browseOutput').onclick = async () => { const path = await
 el<HTMLButtonElement>('browseExtract').onclick = async () => { const path = await open({ multiple: false, filters: [{ name: 'PX1 disc', extensions: ['px1'] }] }); if (typeof path === 'string') await loadPx1(path, 'extract'); };
 el<HTMLButtonElement>('browseVerify').onclick = async () => { const path = await open({ multiple: false, filters: [{ name: 'PX1 disc', extensions: ['px1'] }] }); if (typeof path === 'string') await loadPx1(path, 'verify'); };
 el<HTMLButtonElement>('browseDir').onclick = async () => { const path = await open({ directory: true, multiple: false }); if (typeof path === 'string') { input('extractDir').value = path; updateButtons(); } };
+async function loadPs2(path: string, binPath: string | null = null) {
+  ps2Source = null; ps2BinPath = binPath; input('ps2Path').value = path; input('ps2Bin').value = binPath || '';
+  text('ps2Summary', 'Inspecting disc…');
+  try {
+    const disc = await invoke<Ps2Source>('inspect_ps2', { path, binPath });
+    ps2Source = disc;
+    if (disc.format === 'BIN/CUE') input('ps2Bin').value = disc.files[0];
+    input('ps2Output').value = path.replace(/\.[^.\\/]+$/, '.chd');
+    el<HTMLElement>('ps2Summary').innerHTML = properties([
+      ['Platform:', disc.platform], ['Disc type:', disc.media], ['Original format:', disc.format],
+      ['Title:', known(disc.title)], ['Serial:', known(disc.serial)], ['Volume:', known(disc.volume_id)], ['Original size:', size(disc.original_size)],
+      ['Compression format:', disc.format === 'CHD' ? 'CHD' : 'CHD (planned output)'],
+      ['Compressed size:', disc.compressed_size == null ? 'Not compressed yet' : size(disc.compressed_size)],
+      ['Ratio:', disc.compressed_size == null ? 'Unknown' : `${(disc.compressed_size / disc.original_size * 100).toFixed(1)}%`],
+      ['Storage change:', disc.compressed_size == null ? 'Unknown' : disc.compressed_size <= disc.original_size ? `Saved ${size(disc.original_size - disc.compressed_size)}` : `Larger by ${size(disc.compressed_size - disc.original_size)}`],
+      ['Verification:', disc.format === 'CHD' ? 'Run Verify CHD' : 'Not compressed yet'],
+      ['Detection:', disc.confidence]
+    ]);
+    updateButtons();
+  } catch (e) { text('ps2Summary', String(e)); }
+  updateButtons();
+}
+el<HTMLButtonElement>('browsePs2').onclick = async () => { const p = await open({ multiple: false, filters: [{ name: 'Disc image', extensions: ['iso', 'cue', 'chd', 'bin'] }] }); if (typeof p === 'string') await loadPs2(p); };
+el<HTMLButtonElement>('browsePs2Bin').onclick = async () => { const p = await open({ multiple: false, filters: [{ name: 'BIN image', extensions: ['bin'] }] }); if (typeof p === 'string' && input('ps2Path').value) await loadPs2(input('ps2Path').value, p); };
+el<HTMLButtonElement>('browsePs2Output').onclick = async () => { const p = await save({ defaultPath: input('ps2Output').value || undefined, filters: [{ name: 'CHD image', extensions: ['chd'] }] }); if (p) { input('ps2Output').value = p; updateButtons(); } };
+el<HTMLButtonElement>('browsePs2Dir').onclick = async () => { const p = await open({ directory: true, multiple: false }); if (typeof p === 'string') { input('ps2Dir').value = p; updateButtons(); } };
+el<HTMLButtonElement>('doPs2Compress').onclick = () => {
+  if (!ps2Source || !input('ps2Output').value) return;
+  const source = { ...ps2Source, platform: input('ps2Platform').value === 'auto' ? ps2Source.platform : 'PlayStation 2' };
+  void run<ChdReport>('compress_ps2', { source, outputPath: input('ps2Output').value }, report => {
+    const original = report.manifest.files.reduce((sum, f) => sum + f.size, 0);
+    showResult(`CHD: ${size(report.manifest.chd_size)} / Original: ${size(original)}   Ratio: ${(report.manifest.chd_size / original * 100).toFixed(1)}%   ${report.warning || 'Exact restoration verified'}`);
+    lastOutput = input('ps2Output').value; el<HTMLElement>('resultActions').hidden = false; el<HTMLButtonElement>('verifyResult').hidden = true;
+  });
+};
+el<HTMLButtonElement>('doPs2Verify').onclick = () => {
+  if (!ps2Source || ps2Source.format !== 'CHD') return;
+  void run<ChdReport>('verify_ps2', { path: ps2Source.path }, report => showResult(report.warning || 'CHD verified'));
+};
+el<HTMLButtonElement>('doPs2Extract').onclick = () => {
+  if (!ps2Source || ps2Source.format !== 'CHD' || !input('ps2Dir').value) return;
+  void run<ChdReport>('extract_ps2', { path: ps2Source.path, outputDir: input('ps2Dir').value }, report => showResult(report.verified ? 'Restored files match original SHA-256 hashes byte for byte.' : report.warning || 'Restoration differs from original.'));
+};
+el<HTMLButtonElement>('doPs2Batch').onclick = async () => {
+  const paths = await open({ multiple: true, filters: [{ name: 'PS2 ISO or CUE', extensions: ['iso', 'cue'] }] });
+  if (!Array.isArray(paths) || paths.length === 0) return;
+  const outputDir = await open({ directory: true, multiple: false }); if (typeof outputDir !== 'string') return;
+  busy = true; updateButtons();
+  for (const p of paths) {
+    try {
+      const source = await invoke<Ps2Source>('inspect_ps2', { path: p, binPath: null });
+      if (source.platform !== 'PlayStation 2') { log(`Skipped unidentified disc: ${base(p)}`); continue; }
+      const outputPath = outputDir.replace(/[\\/]$/, '') + '\\' + base(p).replace(/\.[^.]+$/, '.chd');
+      const report = await invoke<ChdReport>('compress_ps2', { source, outputPath });
+      log(`${base(p)}: ${size(report.manifest.chd_size)}; ${report.warning || 'exact'}`);
+    } catch (e) { log(`${base(p)}: ${e}`); }
+  }
+  busy = false; updateButtons(); showResult('Batch finished. See Log for each disc and any warnings.');
+};
 input('pxOutput').oninput = updateButtons;
 
 el<HTMLButtonElement>('doCompress').onclick = () => {
@@ -329,6 +411,7 @@ void getCurrentWebview().onDragDropEvent(event => {
   const path = event.payload.paths[0];
   if (!path) return;
   if (path.toLowerCase().endsWith('.cue')) { setMode('compress'); void loadCue(path); }
+  else if (/\.(iso|chd)$/i.test(path)) { setMode('ps2'); void loadPs2(path); }
   else if (path.toLowerCase().endsWith('.px1')) { const target = mode === 'verify' ? 'verify' : 'extract'; setMode(target); void loadPx1(path, target); }
 });
 log('Ready. Select a CUE or PX1 file.');

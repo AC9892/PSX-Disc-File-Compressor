@@ -2696,8 +2696,11 @@ dependencies = [
 name = "px1-disc-compressor"
 version = "0.1.0"
 dependencies = [
+ "hex",
  "px1-core",
  "serde",
+ "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

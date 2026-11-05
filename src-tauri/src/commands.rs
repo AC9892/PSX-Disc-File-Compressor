@@ -1,6 +1,30 @@
 use px1_core::{self as px, container::{source_info_with_bin, compress_with_bin_strategy, compress_with_bin_combined}, DiscInfo, Manifest, Report};
 use std::{fs::OpenOptions, io::Write, path::PathBuf, sync::{Arc,atomic::{AtomicBool,Ordering}}};
 use tauri::{Emitter, State};
+use crate::ps2::{self, DiscSource, ChdReport};
+
+#[tauri::command]
+pub fn inspect_ps2(path: String, bin_path: Option<String>) -> Result<DiscSource,String> {
+    ps2::inspect(&PathBuf::from(path), bin_path.as_deref().map(std::path::Path::new))
+}
+
+#[tauri::command]
+pub async fn compress_ps2(state: State<'_,JobState>, source: DiscSource, output_path: String) -> Result<ChdReport,String> {
+    let (guard,_) = start(&state)?;
+    tauri::async_runtime::spawn_blocking(move || { let _guard=guard; ps2::compress(&source,&PathBuf::from(output_path)) }).await.map_err(|e|e.to_string())?
+}
+
+#[tauri::command]
+pub async fn verify_ps2(state: State<'_,JobState>, path: String) -> Result<ChdReport,String> {
+    let (guard,_) = start(&state)?;
+    tauri::async_runtime::spawn_blocking(move || { let _guard=guard; ps2::verify(&PathBuf::from(path)) }).await.map_err(|e|e.to_string())?
+}
+
+#[tauri::command]
+pub async fn extract_ps2(state: State<'_,JobState>, path: String, output_dir: String) -> Result<ChdReport,String> {
+    let (guard,_) = start(&state)?;
+    tauri::async_runtime::spawn_blocking(move || { let _guard=guard; ps2::extract(&PathBuf::from(path),&PathBuf::from(output_dir)) }).await.map_err(|e|e.to_string())?
+}
 
 #[derive(Default)]
 pub struct JobState { busy: Arc<AtomicBool>, cancel: Arc<AtomicBool> }

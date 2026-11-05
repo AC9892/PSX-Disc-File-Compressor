@@ -2,6 +2,19 @@ use super::*;
 use std::{cell::RefCell, fs, io::{Read,Seek,SeekFrom,Write}, sync::atomic::{AtomicBool,Ordering}};
 use sha2::{Digest,Sha256};
 
+#[test]
+fn boot2_identifies_ps2_cd_without_using_filename() {
+    let dir=tempfile::tempdir().unwrap();
+    let cue=source(dir.path());
+    let bin=dir.path().join("20261007_021434.BIN");
+    let mut image=fs::read(&bin).unwrap();
+    let boot=b"BOOT2 = cdrom0:\\SLUS_216.78;1\r\n";
+    image[21*2352+24..21*2352+24+boot.len()].copy_from_slice(boot);
+    fs::write(&bin,image).unwrap();
+    let info=container::source_info_with_bin(&cue,None).unwrap();
+    assert_eq!(info.disc.platform.as_deref(),Some("PlayStation 2"));
+}
+
 fn write_sector(image: &mut [u8], number: usize, payload: &[u8]) {
     let base=number*2352;
     image[base]=0;
