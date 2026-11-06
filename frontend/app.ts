@@ -22,6 +22,10 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <button data-mode="verify">Verify</button>
   </nav>
   <main>
+    <div class="supportedFormats" aria-label="Supported PlayStation disc formats">
+      <strong>Supported:</strong> PS1 BIN/CUE → PX1 · PS2 DVD ISO or CD BIN/CUE → CHD · One BIN per CUE<br>
+      <span>Extract and Verify accept PX1 and CHD.</span>
+    </div>
     <section id="compressPane" class="page">
       <fieldset><legend>Source disc</legend>
         <div class="field pathfield"><label for="cuePath">Disc:</label><input id="cuePath" readonly placeholder="Select a CUE or ISO"><button id="browseCue" title="Browse for disc" aria-label="Browse for disc">…</button></div>
