@@ -23,8 +23,9 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   </nav>
   <main>
     <div class="supportedFormats" aria-label="Supported PlayStation disc formats">
-      <strong>Supported:</strong> PS1 BIN/CUE → PX1 · PS2 DVD ISO or CD BIN/CUE → CHD · One BIN per CUE<br>
-      <span>Extract and Verify accept PX1 and CHD.</span>
+      <div><strong>PS1</strong><span>BIN/CUE → PX1</span></div>
+      <div><strong>PS2</strong><span>DVD ISO · CD BIN/CUE → CHD</span></div>
+      <small>One BIN per CUE</small>
     </div>
     <section id="compressPane" class="page">
       <fieldset><legend>Source disc</legend>

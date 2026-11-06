@@ -13,8 +13,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .modebar button { min-width: 76px; }
 .modebar button.selected { background: #4c5863; border-color: #8194a3; color: #fff; }
 main { flex: 1; min-height: 0; overflow: auto; padding: 0 14px 10px; }
-.supportedFormats { max-width: 760px; margin: 0 0 10px; padding: 6px 9px; border: 1px solid #464a4e; border-radius: 2px; color: #c5c9cc; background: #2b2d30; font-size: 12px; line-height: 1.35; }
-.supportedFormats strong { color: #e2e5e7; }
+.supportedFormats { max-width: 760px; margin: 0 0 9px; padding: 6px 9px; border: 1px solid #464a4e; border-radius: 2px; color: #d3d6d8; background: #2b2d30; font-size: 12px; line-height: 1.3; }
+.supportedFormats div { display: flex; align-items: center; gap: 8px; margin: 2px 0; }
+.supportedFormats strong { display: inline-block; min-width: 32px; padding: 1px 4px; border-radius: 2px; color: #fff; background: #4c5863; text-align: center; font-size: 11px; }
+.supportedFormats small { display: block; margin: 3px 0 0 40px; color: #aeb0b2; font-size: 11px; }
 .page { max-width: 760px; }
 [hidden] { display: none !important; }
 fieldset { min-width: 0; margin: 0 0 10px; padding: 8px 10px 10px; border: 1px solid #55585d; }
