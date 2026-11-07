@@ -1,5 +1,8 @@
 node_modules/
 dist/
+.test-temp/
+artwork/
+__pycache__/
 src-tauri/target/
 px1-core/target/
 src-tauri/gen/schemas/
@@ -12,6 +15,8 @@ src-tauri/gen/schemas/
 *.[gG][dD][iI]
 *.[pP][xX]1
 *.[pP][xX]1md
+*.[pP][sS]3[zZ]
+*.ps3z.partial-*
 *.tmp
 *.log
 

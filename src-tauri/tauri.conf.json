@@ -4,6 +4,6 @@
   "version": "0.1.0",
   "identifier": "com.px1.disccompressor",
   "build": {"beforeDevCommand":"npm run build","beforeBuildCommand":"npm run build","frontendDist":"../dist"},
-  "app": {"windows":[{"title":"PSX Disc File Compressor","width":820,"height":550,"minWidth":700,"minHeight":480}],"security":{"csp":null}},
+  "app": {"windows":[{"title":"PSX Disc File Compressor","width":820,"height":720,"minWidth":700,"minHeight":600}],"security":{"csp":null}},
   "bundle": {"active":true,"targets":"all","icon":["icons/icon.ico"],"windows":{"webviewInstallMode":{"type":"offlineInstaller"}}}
 }

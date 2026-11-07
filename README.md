@@ -1,6 +1,6 @@
 # PSX Disc File Compressor
 
-PSX Disc File Compressor is a Windows desktop utility that compresses PS1 BIN/CUE discs into `.px1` and PS2 ISO or single-BIN CUE discs into CHD. It verifies archives and restores original files with byte-level checks where original hashes are available. The PS1 archive format uses the PX1 name. It uses Tauri 2, TypeScript/HTML/CSS, Rust, zstd, XZ, Brotli, and SHA-256.
+PSX Disc File Compressor is a Windows desktop utility that compresses PS1 BIN/CUE discs into `.px1`, PS2 ISO or single-BIN CUE discs into CHD, and PS3 ISO images into `.ps3z`. It verifies archives and restores original files with byte-level checks where original hashes are available. The PS1 archive format uses the PX1 name. It uses Tauri 2, TypeScript/HTML/CSS, Rust, zstd, XZ, Brotli, and SHA-256.
 
 > **Disc support in v0.1:** One CUE referencing one `BINARY` BIN made of 2352-byte sectors. Multiple tracks within that single BIN are supported. Multi-BIN discs and other CUE layouts are not supported yet.
 
@@ -10,7 +10,23 @@ The shared **Compress**, **Extract**, and **Verify** tabs handle PS1 PX1 and PS2
 
 Install [`chdman` from MAME](https://docs.mamedev.org/tools/chdman.html) and place `chdman.exe` beside the portable app EXE, or put its folder on `PATH`. PS2 DVD ISO uses `createdvd` / `extractdvd`; PS2 CD BIN/CUE uses `createcd` / `extractcd`. `chdman verify` runs after creation. A temporary extraction is compared against the original SHA-256 hashes. The app stores original filenames, hashes, and exact CUE bytes in an adjacent `.chd.json` file; **keep this sidecar with the CHD**. The source images are never deleted or modified. The batch button handles multiple selected ISO/CUE images sequentially and logs each result.
 
-CHD integrity alone does not prove exact source bytes. The app reports exact restoration only when extracted ISO or BIN/CUE bytes match the recorded original hashes. A CHD without this app's sidecar can be verified and extracted, but its original filenames and bytes cannot be proven. CHD conversion may normalize CD layouts; a mismatch is reported and the source should be retained. PS2 multi-BIN CUE and PS3 images are not supported.
+CHD integrity alone does not prove exact source bytes. The app reports exact restoration only when extracted ISO or BIN/CUE bytes match the recorded original hashes. A CHD without this app's sidecar can be verified and extracted, but its original filenames and bytes cannot be proven. CHD conversion may normalize CD layouts; a mismatch is reported and the source should be retained. PS2 multi-BIN CUE is not supported.
+
+## PS3 ISO support (development build)
+
+PS3 support accepts a single, complete 2048-byte-sector Blu-ray ISO with the `PlayStation3` disc marker and an ISO 9660 primary volume descriptor. Detection reads disc contents, never the filename. It writes a separate `.ps3z` archive using streaming zstd compression; PX1 and CHD formats are unchanged. The archive contains the original ISO filename, byte length, and SHA-256. The app decodes and hashes the entire archive after compression. Verify repeats that check; Extract writes the original ISO filename and checks its bytes against the recorded hash. The source ISO is never modified or deleted. Compression and extraction can be cancelled; existing output files are never overwritten.
+
+PS3Z is an application-specific archive, **not a bootable ISO or a CHD**. Extract it to an ISO before using another tool. It preserves the supplied ISO bytes exactly; it does not decrypt, repair, or validate a PS3 disc dump, nor does it claim the restored image will boot. The app reads a PS3 title from `PS3_GAME/PARAM.SFO` when present and a title ID from `PS3_DISC.SFB` or `PARAM.SFO`. The current PS3Z header does not retain those descriptive fields, so reopening a PS3Z shows limited game information. Folder-form dumps, split ISOs, encrypted-disc handling beyond byte preservation, and PS3 batch operations are not yet supported. A disc without the checked markers is refused rather than guessed to be PS3. Already compressed or encrypted data may shrink little. Keep original dumps until you independently test restoration and any desired gameplay.
+
+The available 4,463,853,568-byte PS3 ISO passed compression, Verify, extraction, and a final source-versus-restored SHA-256 comparison. Its PS3Z archive was 4,356,276,113 bytes (97.59% of source; about 102.6 MiB saved). This verifies exact file restoration for that dump, not gameplay or compatibility with every PS3 disc. The [PS3Z format description](docs/PS3Z_FORMAT.md) documents the archive layout.
+
+## Artwork
+
+The right-side game panel shows metadata from the selected disc or archive, with a manual title/console option when identification is incomplete. Settings has its own tab and can hide the panel or disable artwork and optional identification. PS1 and PS2 standard covers match a separate local WebP collection by detected serial. PS3 title IDs come from disc metadata and match a separate local library of 3,809 GameTDB front covers; a missing cover can also be downloaded on demand, converted to WebP quality 85, and cached for offline use. Automatic PS3 downloads are off by default. Clear Artwork Cache removes individually downloaded PS3 covers and manual replacements after confirmation, while retaining all three platform libraries. Artwork is never stored in disc archives or embedded in the EXE. See [artwork setup, sources, and permissions](docs/ARTWORK.md).
+
+If a PS3 dump includes a CUE with one `FILE "...ISO" BINARY` entry, selecting the CUE opens its referenced ISO after validating PS3 disc markers. PS3Z archives the ISO bytes only; keep the CUE separately. A manual PS3 choice is also available for an ISO routed to the unknown-disc screen, but it still requires successful disc-content validation.
+
+The retained local collection has 9,118 PS1 standard covers, 10,430 PS2 standard covers, and one cached PS3 cover. Full-size WebP files total 1,164,703,956 bytes; thumbnails add 155,096,590 bytes, for a 1.23 GiB local collection. The original bulk conversion also processed 15,040 3D images, but those generated covers and thumbnails were removed after the user chose standard covers only, saving about 1.01 GiB. No image conversions failed. Two PS2 standard images had non-serial filenames and remain in `ps2/unmatched/default` without automatic game matching. The converted images and temporary clones are not in GitHub.
 
 With MAME `chdman` 0.289, synthetic PS2 DVD ISO and single-BIN CD CUE images both passed CHD creation, verification, extraction, and original-file SHA-256 comparison. A full Dragon Ball Z: Budokai Tenkaichi 3 DVD ISO also passed: 3,020,816,384 source bytes became a 1,751,727,635-byte CHD (57.99% of source size; 1.182 GiB saved), and the explicit restored ISO matched the source hash. This is one real DVD test, not a claim of compatibility with every PS2 dump.
 
@@ -42,7 +58,7 @@ npm ci
 npm run tauri dev
 ```
 
-The frontend is built into `dist` and loaded by the Tauri window. PX1 uses Tauri IPC to call its standalone Rust core; it does not start a localhost server or expose an HTTP API. The app itself makes no network requests.
+The frontend is built into `dist` and loaded by the Tauri window. PX1 uses Tauri IPC to call its standalone Rust core; it does not start a localhost server or expose an HTTP API. Disc compression works offline. PS3 cover downloads, when requested or enabled in Settings, use outbound HTTPS.
 
 Build the Windows executable and offline MSI/NSIS installers with:
 
@@ -62,6 +78,7 @@ Run the regular synthetic-disc tests:
 
 ```powershell
 cargo test --manifest-path px1-core/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
 Run the slower, roughly 700 MiB synthetic round-trip test separately:
@@ -71,6 +88,8 @@ cargo test --manifest-path px1-core/Cargo.toml full_size_disc_streams_and_roundt
 ```
 
 `px1-core` has no Tauri or network dependency. Its `compression` module handles zstd, XZ, and Brotli chunks without PlayStation sector assumptions; CUE, metadata, and container modules provide the PX1-specific rules. The app reads PX1 v1.0, Best Size v1.1, and two-layer v1.2 archives. See the [format specification](docs/PX1_FORMAT.md) and [codec benchmark](docs/COMPRESSION_BENCHMARK.md).
+
+On Windows, if tests fail with access errors in the system temporary folder, set `TEMP` and `TMP` to a writable test folder before running Cargo. The optional full PS3 ISO round trip requires `PS3_TEST_ISO` (source path), `PS3_FULL_TEST=1`, and `PS3_TEST_WORKDIR` (a separate folder with at least 10 GiB free). It creates disposable archive and restored files there and removes them after a successful comparison. The source ISO is never changed.
 
 ## Upload this repository
 
