@@ -26,7 +26,7 @@ The right-side game panel shows metadata from the selected disc or archive, with
 
 If a PS3 dump includes a CUE with one `FILE "...ISO" BINARY` entry, selecting the CUE opens its referenced ISO after validating PS3 disc markers. PS3Z archives the ISO bytes only; keep the CUE separately. A manual PS3 choice is also available for an ISO routed to the unknown-disc screen, but it still requires successful disc-content validation.
 
-The retained local collection has 9,118 PS1 standard covers, 10,430 PS2 standard covers, and one cached PS3 cover. Full-size WebP files total 1,164,703,956 bytes; thumbnails add 155,096,590 bytes, for a 1.23 GiB local collection. The original bulk conversion also processed 15,040 3D images, but those generated covers and thumbnails were removed after the user chose standard covers only, saving about 1.01 GiB. No image conversions failed. Two PS2 standard images had non-serial filenames and remain in `ps2/unmatched/default` without automatic game matching. The converted images and temporary clones are not in GitHub.
+The retained local collection has 9,118 PS1 standard covers, 10,430 PS2 standard covers, and 3,810 PS3 covers. WebP covers and thumbnails total 1,502,884,884 bytes (about 1.40 GiB). The original PS1/PS2 bulk conversion also processed 15,040 3D images, but those generated covers and thumbnails were removed after the user chose standard covers only. No image conversions failed. Two PS2 standard images had non-serial filenames and remain in `ps2/unmatched/default` without automatic game matching. The converted images and temporary clones are not in GitHub.
 
 With MAME `chdman` 0.289, synthetic PS2 DVD ISO and single-BIN CD CUE images both passed CHD creation, verification, extraction, and original-file SHA-256 comparison. A full Dragon Ball Z: Budokai Tenkaichi 3 DVD ISO also passed: 3,020,816,384 source bytes became a 1,751,727,635-byte CHD (57.99% of source size; 1.182 GiB saved), and the explicit restored ISO matched the source hash. This is one real DVD test, not a claim of compatibility with every PS2 dump.
 
@@ -47,7 +47,7 @@ Source filenames are filesystem labels, not evidence of disc identity. PX1 never
 
 When a manually selected BIN has a different filename from the CUE's `FILE` entry, the PX1 records the selected source filename as optional metadata. Extraction names the restored BIN as the CUE expects, so the untouched CUE can locate it. The source BIN is not renamed or modified.
 
-`FILE` names in the CUE must be UTF-8 so an undecodable label cannot select the wrong BIN. UTF-8 CUEs with a byte-order mark are accepted; non-UTF-8 bytes elsewhere in a CUE are preserved exactly. Multi-BIN layouts, CHD conversion, `.px1md`, and direct emulator loading are outside v0.1.
+`FILE` names in the CUE must be UTF-8 so an undecodable label cannot select the wrong BIN. UTF-8 CUEs with a byte-order mark are accepted; non-UTF-8 bytes elsewhere in a CUE are preserved exactly. Multi-BIN layouts, `.px1md` import, and direct emulator loading of PX1 or PS3Z are outside v0.1.
 
 ## Build on Windows
 
