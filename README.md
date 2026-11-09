@@ -1,5 +1,7 @@
 # PSX Disc File Compressor
 
+Get title img from here https://github.com/AC9892/PSX-Game-Covers imgs sources listed in readme
+
 PSX Disc File Compressor is a Windows desktop utility that compresses PS1 BIN/CUE discs into `.px1`, PS2 ISO or single-BIN CUE discs into CHD, and PS3 ISO images into `.ps3z`. It verifies archives and restores original files with byte-level checks where original hashes are available. The PS1 archive format uses the PX1 name. It uses Tauri 2, TypeScript/HTML/CSS, Rust, zstd, XZ, Brotli, and SHA-256.
 
 > **Disc support in v0.1:** One CUE referencing one `BINARY` BIN made of 2352-byte sectors. Multiple tracks within that single BIN are supported. Multi-BIN discs and other CUE layouts are not supported yet.
